@@ -1,0 +1,5 @@
+# Dati generati a runtime sulla UNO Q (baseline SGP30)
+data/
+
+__pycache__/
+*.pyc
