@@ -1,5 +1,5 @@
 """
-Toret-Breath Vision – bin fill estimation with monocular depth (Strategy 2).
+TO-Breath Vision – bin fill estimation with monocular depth (Strategy 2).
 Runs on the Linux side of the Arduino UNO Q.
 
   pip install onnxruntime opencv-python-headless numpy

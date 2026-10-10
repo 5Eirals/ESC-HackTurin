@@ -1,4 +1,4 @@
-// ESC-HackTurin: firmware del microcontrollore (STM32U585 della UNO Q).
+// TO-Breath: firmware del microcontrollore (STM32U585 della UNO Q).
 //
 // 1) Visione / riempimento (depth_fill.py): pilota l'anello LED (flash) e legge il Modulino Distance.
 // 2) Gas: legge AHT20 (temperatura/umidita') e SGP30 (TVOC/eCO2 + segnali grezzi) sul bus I2C

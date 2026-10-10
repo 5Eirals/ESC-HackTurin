@@ -1,4 +1,4 @@
-"""ESC-HackTurin: app Linux della UNO Q.
+"""TO-Breath: app Linux della UNO Q.
 
 - Gas: riceve dal microcontrollore le letture di AHT20 + SGP30, decide (allarme gas relativo al
   valore a riposo), registra gli eventi per il "centro di controllo" simulato dell'azienda

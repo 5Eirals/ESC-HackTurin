@@ -1,30 +1,178 @@
-# ESC-HackTurin: cassonetto smart
+# TO-Breath
 
-Progetto per hackTurin 2026, challenge **City Signals**. Un cassonetto misura i gas da decomposizione (SGP30) e la temperatura e l'umidità (AHT20). La decisione avviene in locale sulla Arduino UNO Q: in caso di anomalia il cassonetto manda un evento al centro di controllo, simulato, dell'azienda di raccolta rifiuti.
+**Il cassonetto che respira Torino.** Progetto per hackTurin 2026, challenge **City Signals**.
+
+TO-Breath trasforma un normale cassonetto in un sensore urbano. Sulla Arduino UNO Q, senza cloud, il cassonetto:
+
+1. **annusa** i gas della decomposizione (SGP30) e misura temperatura e umidità (AHT20): se l'aria dentro il cassonetto cambia in modo anomalo (rifiuti organici in degrado, principio d'incendio) lancia un allarme;
+2. **guarda** dentro di sé con una camera e un modello di stima della profondità (Depth Anything V2), aiutato da un sensore di distanza ToF, e calcola **quanto è pieno**;
+3. **impara** dallo storico dell'ultimo mese a che ritmo si riempie e **prevede quando sarà pieno**;
+4. **avvisa** il centro di controllo (simulato) dell'azienda di raccolta rifiuti e mostra tutto su una **dashboard web**.
+
+L'obiettivo è passare dalla raccolta a calendario fisso a una raccolta guidata dai dati: svuotare i cassonetti quando servono, non quando capita.
+
+---
+
+## Hardware
+
+| Componente | Collegamento | A cosa serve |
+| :--- | :--- | :--- |
+| **Arduino UNO Q** | — | MCU STM32U585 (sketch) + Linux (app Python e dashboard) |
+| Grove Base Shield v2 | sopra la UNO Q, interruttore **VCC su 3,3 V** | porte Grove per i sensori |
+| **SGP30** (0x58) | porta I2C Grove | TVOC, eCO₂, segnali grezzi H₂ ed etanolo |
+| **AHT20** (0x38) | porta I2C Grove | temperatura e umidità (anche per compensare l'SGP30) |
+| **Modulino Distance** (ToF) | Qwiic | distanza reale in un punto: ancora metrica per la profondità |
+| Anello LED WS2813 (16 LED) | Grove D6 | flash per illuminare l'interno del cassonetto durante lo scatto |
+| **Telefono** con app IP Webcam | Wi-Fi, `PHONE_IP:PORT` | camera che inquadra l'interno del cassonetto dall'alto |
 
 ## Architettura
 
 ```
- SGP30 (0x58) ─┐  I2C (Grove Base Shield, porte I2C, VCC 3,3 V)
- AHT20 (0x38) ─┘
-        │
-        ▼
- MCU STM32U585 (sketch/)            ── Bridge ──►    Linux (python/)
- driver I2C scritti da noi,                          allarme gas relativo al riposo,
- compensazione d'umidità,                            salvataggio/ripristino della baseline,
- lettura ogni 1 s                                    eventi per il centro di controllo
-                                                             │
-                                                             ▼
-                                                     Dashboard web (assets/), porta 7000
+                         ┌──────────────────────── Arduino UNO Q ────────────────────────┐
+ SGP30 ─┐ I2C            │  MCU STM32U585 (sketch/)            Linux (python/)            │
+ AHT20 ─┘ ──────────────►│  driver I2C, lettura ogni 1 s  ─►   main.py                    │
+ Modulino Distance ─────►│  read_tof()                    ◄─►  ├─ gas_alarm.py            │
+ Anello LED ◄────────────│  set_flash()                 Bridge ├─ baseline_store.py       │
+                         │                                     ├─ depth_fill.py  (ONNX)   │
+ Telefono (IP Webcam) ──────── HTTP(S), una foto ogni 5 min ──► ├─ fill_history.py         │
+                         │                                     └─ simulate_fill.py        │
+                         │                                          │ WebUI (socket.io)   │
+                         └──────────────────────────────────────────┼─────────────────────┘
+                                                                    ▼
+                                         Dashboard web (assets/), http://<ip-uno-q>:7000
+                                         livello di riempimento + previsione, gas,
+                                         centro di controllo simulato
 ```
 
-| Cartella | Contenuto |
-| :--- | :--- |
-| `sketch/` | Firmware MCU: anello LED (flash) e Modulino Distance per la visione; `aht20.*` e `sgp30.*` (driver I2C minimali con controllo CRC, usano solo `Wire`), `sketch.ino` (lettura a 1 Hz e invio via Bridge) |
-| `python/` | `depth_fill.py` (livello di riempimento: camera + modello di profondità + ToF; modalità scelta con `VISION_MODE` in `main.py`), `main.py` (logica, eventi, WebUI), `fill_history.py` (storico del riempimento e previsione del pieno), `simulate_fill.py` (un mese di misure inventate per le prove), `gas_alarm.py` (allarme relativo al valore a riposo), `baseline_store.py` (persistenza della baseline SGP30) |
-| `assets/` | Dashboard: livello di riempimento con previsione, letture in tempo reale, grafici TVOC/eCO₂, centro di controllo simulato |
+Il microcontrollore fa solo il lavoro "elettrico" (sensori, LED, ToF) e manda i dati grezzi. Tutte le decisioni (allarmi, profondità, previsioni, eventi) le prende l'app Python sul lato Linux.
 
-### Messaggi via Bridge
+## Struttura del repository
+
+```
+ESC-HackTurin/                   (repository di TO-Breath)
+├── app.yaml                     configurazione dell'app Arduino App Lab (nome, brick web_ui)
+├── sketch/                      firmware del microcontrollore
+│   ├── sketch.ino               loop a 1 Hz, invio dati via Bridge, flash LED, lettura ToF
+│   ├── aht20.h / aht20.cpp      driver minimale AHT20 (solo Wire, controllo CRC)
+│   ├── sgp30.h / sgp30.cpp      driver minimale SGP30 (IAQ, segnali grezzi, baseline, umidità)
+│   ├── sensirion_crc.h          CRC-8 Sensirion
+│   └── sketch.yaml              piattaforma e librerie (RouterBridge, Modulino, NeoPixel)
+├── python/                      app Linux
+│   ├── main.py                  punto d'ingresso: callback del Bridge, loop, eventi, dashboard
+│   ├── gas_alarm.py             allarme gas relativo al valore "a riposo"
+│   ├── baseline_store.py        salvataggio/ripristino della baseline SGP30
+│   ├── depth_fill.py            foto -> profondità -> % di riempimento (Depth Anything V2 + ToF)
+│   ├── fill_history.py          storico del riempimento, previsione del pieno, statistiche
+│   ├── simulate_fill.py         genera un mese di misure inventate per demo e prove
+│   └── depth_anything_v2_vits_252.onnx   modello di profondità (ViT-S, ingresso 252×252)
+├── assets/                      dashboard web servita dal brick WebUI
+│   ├── index.html               struttura della pagina
+│   ├── app.js                   rendering di letture, grafici, previsione ed eventi
+│   ├── style.css                stile (tema chiaro e scuro)
+│   └── libs/                    socket.io e client WebUI di Arduino
+├── AI_Depth_Analysis/           riferimento al repository originale di Depth-Anything-V2
+│                                (non usato a runtime: l'app usa il modello ONNX in python/)
+└── data/                        creata a runtime, non versionata (vedi "File generati")
+```
+
+---
+
+## Come funziona
+
+### 1. Microcontrollore (`sketch/sketch.ino`)
+
+- All'avvio scansiona il bus I2C (nel Monitor devono comparire `0x38` e `0x58`), inizializza AHT20, SGP30, Modulino Distance e l'anello LED.
+- **Ogni secondo** legge l'AHT20, passa l'umidità assoluta all'SGP30 (compensazione), legge TVOC/eCO₂ e i segnali grezzi H₂/etanolo e invia tutto a Python con `sensor_data`.
+- **Ogni 60 secondi** invia la baseline dell'SGP30 (`sgp30_baseline`), che Python salva su file.
+- Se un sensore fallisce 5 letture di fila viene reinizializzato; se manca, si riprova ogni 5 s.
+- Espone a Python `set_flash` (luminosità dell'anello), `read_tof` (mediana di 5 letture) e `sgp30_set_baseline`. Le funzioni che usano l'I2C girano nel thread del loop (`provide_safe`), così non si sovrappongono alle letture dei sensori.
+
+### 2. App Python (`python/main.py`)
+
+L'app ha due flussi che girano in parallelo:
+
+- **Callback del Bridge** (dati gas, ogni secondo): aggiornano l'allarme gas, controllano la salute dei sensori, inviano le letture alla dashboard.
+- **Loop principale** (`App.run`): al primo giro ripristina la baseline SGP30 salvata, poi **ogni `CAPTURE_INTERVAL_S` (5 min)** esegue la parte di visione: foto, profondità, riempimento, storico, previsione, eventi.
+
+Le chiamate verso lo sketch si fanno solo dal loop, mai dentro le callback del Bridge.
+
+### 3. Gas: allarme relativo (`gas_alarm.py`, `baseline_store.py`)
+
+Il valore assoluto del TVOC cambia molto da cassonetto a cassonetto, quindi l'allarme è **relativo al valore "a riposo"** di quel cassonetto:
+
+1. dopo il riscaldamento dell'SGP30 (~15 s), per 2 minuti impara il TVOC a riposo;
+2. poi il riposo segue lentamente l'ambiente (media mobile), ma solo quando non c'è allarme;
+3. **`GAS_ALERT`** se il TVOC resta sopra 3× il riposo (e di almeno 100 ppb) per 10 s;
+4. **`GAS_CLEAR`** quando torna sotto 1,5× per 30 s.
+
+L'algoritmo dell'SGP30 impiega ore a stabilizzare la sua baseline: per non ripartire da zero a ogni riavvio, la baseline viene salvata in `data/sgp30_baseline.json` (dopo 10 minuti di funzionamento continuo) e rimandata al sensore all'avvio, se ha meno di 7 giorni.
+
+Se un sensore non risponde per 3 letture di fila parte **`SENSOR_FAULT`**; quando torna a funzionare, **`SENSOR_OK`**.
+
+### 4. Visione: dalla foto al livello di riempimento (`depth_fill.py`)
+
+Ogni 5 minuti `main.py`:
+
+1. accende l'anello LED, aspetta 1 s che l'esposizione del telefono si adatti, **scatta una foto** (`/video/snapshot`, oppure il primo fotogramma dello stream MJPEG) e spegne il LED;
+2. **legge il ToF** nello stesso momento;
+3. ridimensiona la foto a 640 px di larghezza e la passa a **Depth Anything V2** (ONNX Runtime, CPU), che restituisce una mappa di **profondità relativa**: sa cosa è più vicino e cosa più lontano, ma non in millimetri;
+4. la converte in **millimetri** con due ancore di distanza nota, ricalcolate a ogni foto con la relazione `1/Z = a·d + b`:
+   - il **bordo del cassonetto** (`rim_mask.png`), sempre visibile e a distanza fissa dalla camera (`rim_dist_mm`);
+   - il **punto del ToF** (`tof_px`), dove il Modulino Distance misura la distanza vera.
+
+   Se il ToF non è valido, o il cassonetto è così pieno che le due ancore sono alla stessa distanza, riusa lo spostamento `b` della calibrazione e ricalcola solo la scala sul bordo;
+5. confronta la profondità attuale con quella del **cassonetto vuoto** (`empty_depth.npy`) dentro `bin_mask.png`: l'altezza dei rifiuti è `profondità a vuoto − profondità attuale`, da cui:
+   - **riempimento** = mediana delle altezze / profondità del cassonetto (livello tipico);
+   - **picchi** = 90° percentile (cumuli di sacchi);
+   - **filtro**: mediana delle ultime 3 misure;
+   - **svuotamento**: un calo di più del 30% rispetto alla misura precedente.
+
+La modalità della visione si sceglie con `VISION_MODE` in `main.py`, oppure con un argomento (`python main.py calibrate`), la variabile d'ambiente `MODE` o un file `python/mode.txt`:
+
+| Modalità | Cosa fa |
+| :--- | :--- |
+| `snapshot` | salva `calib_frame.jpg`, su cui disegnare le maschere |
+| `calibrate` | con il cassonetto **vuoto** crea la mappa di riferimento, poi passa da sola a `run` |
+| `run` | funzionamento normale: misura, salva, prevede (le vecchie `run` e `predict` unite) |
+| `off` | visione disattivata, restano i sensori gas |
+
+Se mancano `onnxruntime` o `opencv`, la visione si disattiva da sola e il resto continua a funzionare.
+
+### 5. Storico e previsione del pieno (`fill_history.py`)
+
+Ogni misura viene aggiunta a `data/fill_log.csv` (`timestamp, fill_pct, peak_pct, event, source`). Dopo ogni misura l'app stima **quando il cassonetto sarà pieno**:
+
+- **con almeno 7 giorni di dati: profilo settimanale.** Per ciascuna delle 168 ore della settimana calcola il ritmo medio di riempimento (% all'ora) sugli ultimi 30 giorni: così sa che di notte il cassonetto si riempie poco, la sera e nel weekend di più. Il profilo viene poi **scalato sul ciclo in corso** (se questa settimana si riempie più in fretta del solito, la previsione si adegua) e proiettato in avanti, a passi di 15 minuti, dal livello attuale fino al 100%;
+- **con meno dati: retta** sulle misure dall'ultimo svuotamento.
+
+Calcola anche le **statistiche degli ultimi 30 giorni**: numero di svuotamenti, intervallo medio tra due raccolte, livello medio al momento della raccolta (se è basso, si svuota troppo spesso) e quante volte il cassonetto era pieno prima che passasse il camion (se succede, si svuota troppo poco).
+
+**Dati simulati (`simulate_fill.py`).** Per mostrare la previsione senza aspettare un mese, con `SIMULATED_HISTORY = True` l'app genera all'avvio, se non c'è ancora uno storico, 30 giorni di misure inventate: raccolta lunedì, mercoledì e venerdì alle 6, più rifiuti la sera e nel weekend, così dal venerdì al lunedì il cassonetto a volte trabocca. Queste righe hanno `source = sim` e la dashboard le segnala con "Dati simulati". Per rigenerarle: `python python/simulate_fill.py`.
+
+### 6. Dashboard e centro di controllo (`assets/`)
+
+La dashboard (porta 7000) ha tre sezioni:
+
+- **Livello di riempimento**: livello attuale con un indicatore a forma di cassonetto (verde, arancione dall'80%, rosso dal 95%), conto alla rovescia al pieno con data e ora, ritmo previsto (%/giorno), picchi, livello medio alla raccolta, grafico degli ultimi 30 giorni con la previsione tratteggiata (valori leggibili col mouse o con le frecce della tastiera), statistiche e tabella giornaliera;
+- **Letture in tempo reale**: TVOC, eCO₂, temperatura, umidità, H₂ ed etanolo grezzi, stato dei sensori e dell'allarme, grafici degli ultimi 10 minuti;
+- **Centro di controllo (simulato)**: gli eventi che il cassonetto invia all'azienda di raccolta.
+
+| Evento | Gravità | Quando |
+| :--- | :--- | :--- |
+| `GAS_ALERT` | critical | TVOC anomalo rispetto al riposo |
+| `GAS_CLEAR` | info | TVOC rientrato |
+| `BIN_ALMOST_FULL` | warning | riempimento ≥ 80%, con il tempo previsto al pieno |
+| `BIN_FULL` | critical | riempimento ≥ 95% |
+| `BIN_EMPTIED` | info | il cassonetto è stato svuotato |
+| `SENSOR_FAULT` / `SENSOR_OK` | warning / info | un sensore smette o riprende a rispondere |
+
+Gli eventi di riempimento partono una volta per ciclo e si riattivano dopo lo svuotamento.
+
+---
+
+## Messaggi
+
+### Bridge (MCU ↔ Python)
 
 | Direzione | Nome | Contenuto |
 | :--- | :--- | :--- |
@@ -36,47 +184,57 @@ Progetto per hackTurin 2026, challenge **City Signals**. Un cassonetto misura i 
 | Python → MCU | `read_tof` | → distanza in mm (mediana di 5), `-1` se non valida |
 | Python → MCU | `camera_status` | `ok` (bool), esito dell'ultimo scatto, stampato sul Monitor |
 
-## Collegamento
+### WebUI (Python → dashboard)
 
-1. Montare il Grove Base Shield v2 sulla UNO Q e mettere l'interruttore **VCC su 3,3 V**.
-2. Collegare SGP30 e AHT20 a due porte **I2C** qualsiasi dello shield.
-3. All'avvio lo sketch scansiona il bus e stampa nel Monitor gli indirizzi trovati: devono comparire `0x38` e `0x58`.
+| Nome | Quando | Contenuto |
+| :--- | :--- | :--- |
+| `snapshot` | alla connessione | cassonetto, storico gas, eventi, allarme, stato del riempimento |
+| `reading` | ogni 1 s | ultima lettura gas e stato dell'allarme |
+| `fill` | dopo ogni misura | livello, previsione, statistiche, serie del grafico, diagnostica |
+| `event` | a ogni evento | evento per il centro di controllo |
 
-## Avvio
+---
 
-1. Aprire la cartella in **Arduino App Lab** e premere Run. Per i sensori gas non servono librerie esterne (solo `Wire` e `Arduino_RouterBridge`); la parte di visione richiede `Modulino` e `Adafruit_NeoPixel` nello sketch e `onnxruntime`, `opencv-python-headless`, `numpy` in Python. Se mancano i pacchetti Python, la visione si disattiva e i sensori gas continuano a funzionare.
-2. Aprire la dashboard su `http://<ip-della-uno-q>:7000`.
-3. Nei primi ~15 s l'SGP30 è in riscaldamento (eCO₂ 400, TVOC 0). Nei 2 minuti successivi l'allarme impara il valore "a riposo".
-4. Test rapido: avvicinare un pennarello all'alcol al sensore. Dopo ~10 s compare l'evento `GAS_ALERT`.
+## Installazione e avvio
 
-## Visione: livello di riempimento
+1. **Collegamenti:** Grove Base Shield sulla UNO Q con **VCC a 3,3 V**; SGP30 e AHT20 su due porte I2C; Modulino Distance sul Qwiic; anello LED su D6.
+2. **Camera:** installare IP Webcam (o simile) sul telefono, fissarlo sopra il cassonetto puntato verso il fondo e impostare `PHONE_IP`, `PORT` e `USE_HTTPS` in `python/main.py`.
+3. **Avvio:** aprire la cartella in **Arduino App Lab** e premere Run. Lo sketch usa `Arduino_RouterBridge`, `Arduino_Modulino` e `Adafruit NeoPixel` (elencate in `sketch.yaml`); la visione richiede in Python `onnxruntime`, `opencv-python-headless` e `numpy`.
+4. **Dashboard:** `http://<ip-della-uno-q>:7000`.
+5. **Prova gas:** nei primi ~15 s l'SGP30 è in riscaldamento, nei 2 minuti successivi l'allarme impara il valore a riposo. Avvicinando un pennarello all'alcol al sensore, dopo ~10 s compare `GAS_ALERT`.
 
-Ogni `CAPTURE_INTERVAL_S` (5 min) il loop di `main.py` accende l'anello LED, scatta una foto con il telefono (IP Webcam, `PHONE_IP`/`PORT`), legge il ToF e passa il fotogramma a `depth_fill.analyze()`. Depth Anything V2 stima la profondità relativa, che viene convertita in mm con due ancore (bordo del cassonetto e punto del ToF) e confrontata con la mappa del cassonetto vuoto. La modalità si sceglie con `VISION_MODE` in `main.py` (oppure con un argomento, la variabile `MODE` o un file `python/mode.txt`; `off` la disattiva):
+### Calibrazione della visione (una volta per cassonetto)
 
-1. **`snapshot`**: salva `python/calib_frame.jpg` (640 px di larghezza). Su questa immagine si disegnano `bin_mask.png` (interno del cassonetto) e `rim_mask.png` (bordo), in bianco su nero, e si salvano nella cartella `python/`. Si impostano anche `tof_px`, `rim_dist_mm` e `bin_depth_mm` in `depth_fill.CFG`. Anche in `run`, se mancano le maschere, viene salvato `calib_frame.jpg`.
-2. **`calibrate`** (cassonetto VUOTO): crea `empty_depth.npy` e `calib_ab.json`, poi passa da sola a `run`.
-3. **`run`**: misura il riempimento (mediana delle ultime 3 misure), i picchi (90° percentile) e lo svuotamento (calo maggiore del 30%), salva la misura e aggiorna la previsione (le vecchie modalità `run` e `predict` sono ora una sola).
-
-### Storico e previsione
-
-Ogni misura viene aggiunta a `data/fill_log.csv` (`timestamp, fill_pct, peak_pct, event, source`). Dopo ogni misura `fill_history.py` stima quando il cassonetto sarà pieno:
-
-- **con almeno 7 giorni di dati: profilo settimanale.** Per ciascuna delle 168 ore della settimana calcola il ritmo medio di riempimento (% all'ora) sugli ultimi 30 giorni, quindi sa che di notte si riempie poco e nel weekend di più. Il profilo viene scalato sul ciclo in corso (se questa settimana si riempie più in fretta del solito, la previsione si adegua) e proiettato in avanti dal livello attuale fino al 100%;
-- **con meno dati: retta** sulle misure dall'ultimo svuotamento (il vecchio `predict`).
-
-Calcola anche le statistiche degli ultimi 30 giorni: numero di svuotamenti, intervallo medio, livello medio al momento della raccolta, volte in cui era pieno prima della raccolta.
-
-**Dati simulati.** Con `SIMULATED_HISTORY = True` (in `main.py`), se `data/fill_log.csv` non esiste viene generato un mese di misure inventate (`simulate_fill.py`). Il cassonetto simulato viene svuotato lunedì, mercoledì e venerdì alle 6, si riempie di più la sera e nel weekend, e dal venerdì al lunedì a volte trabocca. Queste righe hanno `source = sim` e la dashboard le segnala con "Dati simulati". Per rigenerarle: `python python/simulate_fill.py`. Sul cassonetto vero mettere `SIMULATED_HISTORY = False` e cancellare il file.
-
-### Dashboard e centro di controllo
-
-La sezione **Livello di riempimento** mostra il livello attuale (con un indicatore a forma di cassonetto), il tempo che manca al pieno con data e ora, il ritmo previsto, i picchi, il livello medio alla raccolta, il grafico degli ultimi 30 giorni con la previsione tratteggiata (passando col mouse, o con le frecce da tastiera, si leggono i valori) e una tabella giornaliera. Python invia `snapshot` alla connessione e `fill` dopo ogni misura.
-
-Eventi per il centro di controllo: `BIN_ALMOST_FULL` (≥ 80%, con il tempo previsto al pieno), `BIN_FULL` (≥ 95%), `BIN_EMPTIED`. Ogni evento parte una volta per ciclo e si riattiva dopo lo svuotamento.
+1. Avviare in `snapshot` (o in `run`: se mancano le maschere il fotogramma viene salvato comunque) e aprire `python/calib_frame.jpg`.
+2. Disegnare in bianco su nero, alla stessa risoluzione, `python/bin_mask.png` (interno del cassonetto) e `python/rim_mask.png` (bordo, mai coperto dai rifiuti).
+3. In `depth_fill.CFG` impostare `rim_dist_mm` (camera → bordo), `bin_depth_mm` (bordo → fondo) e `tof_px` (il pixel di `calib_frame.jpg` dove cade il raggio del ToF).
+4. Con il cassonetto **vuoto**, avviare in `calibrate`: crea `empty_depth.npy` e `calib_ab.json` e passa da sola a `run`.
+5. Sul cassonetto vero mettere `SIMULATED_HISTORY = False` e cancellare l'eventuale `data/fill_log.csv` simulato.
 
 ## Parametri da tarare
 
-- **Allarme gas:** `GasAlarm(...)` in `python/gas_alarm.py` (rapporto rispetto al riposo, delta minimo, tempi di conferma). **Il criterio definitivo è ancora da decidere.**
-- **Cassonetto:** `BIN_ID` e `BIN_ADDRESS` in `python/main.py`.
-- **Riempimento:** soglie `FILL_WARN_PCT` / `FILL_FULL_PCT` e intervallo `CAPTURE_INTERVAL_S` in `python/main.py`; parametri della previsione in testa a `python/fill_history.py`.
-- **Baseline SGP30:** viene salvata in `data/sgp30_baseline.json` dopo 10 minuti di funzionamento continuo (`BASELINE_MIN_RUNTIME_S`) e ripristinata a ogni avvio, se ha meno di 7 giorni.
+| Dove | Parametro | Default |
+| :--- | :--- | :--- |
+| `python/main.py` | `BIN_ID`, `BIN_ADDRESS` | `TO-0001`, Via Vincenzo Vela 17 |
+| `python/main.py` | `VISION_MODE`, `CAPTURE_INTERVAL_S` | `run`, 300 s |
+| `python/main.py` | `FILL_WARN_PCT`, `FILL_FULL_PCT` | 80%, 95% |
+| `python/main.py` | `SIMULATED_HISTORY` | `True` (demo) |
+| `python/main.py` | `PHONE_IP`, `PORT`, `USE_HTTPS`, `FLASH_LEVEL`, `FLASH_SETTLE_S` | camera e flash |
+| `python/depth_fill.py` | `CFG`: `rim_dist_mm`, `bin_depth_mm`, `tof_px`, `emptied_drop_pct` | misure del cassonetto |
+| `python/fill_history.py` | `WINDOW_DAYS`, `PROFILE_MIN_DAYS`, `TREND_CLAMP` | 30 g, 7 g, 0,5-2× |
+| `python/gas_alarm.py` | `GasAlarm(...)`: rapporto, delta minimo, tempi di conferma | 3×, 100 ppb, 10 s / 1,5×, 30 s |
+
+Il criterio definitivo dell'allarme gas è ancora da decidere: i valori attuali sono un punto di partenza da tarare sul campo.
+
+## File generati a runtime
+
+| File | Contenuto |
+| :--- | :--- |
+| `data/fill_log.csv` | storico delle misure di riempimento (anche quelle simulate) |
+| `data/sgp30_baseline.json` | baseline SGP30 da ripristinare all'avvio |
+| `python/last_frame.jpg` | ultima foto scattata |
+| `python/calib_frame.jpg` | fotogramma su cui disegnare le maschere |
+| `python/empty_depth.npy`, `python/calib_ab.json` | calibrazione a vuoto |
+| `python/bin_mask.png`, `python/rim_mask.png` | maschere disegnate a mano |
+
+`data/` e `last_frame.jpg` non sono versionati (`.gitignore`).
