@@ -20,12 +20,8 @@
 //    look in the Library Manager for a WS28xx library that supports it.
 
 #include <Arduino_RouterBridge.h>
-<<<<<<< HEAD
-#include <Arduino_Modulino.h>
-=======
 #include <Wire.h>
-#include <Modulino.h>
->>>>>>> 6c5bdb6b91d969ff736fc5852d8aa6ee388b52bc
+#include <Arduino_Modulino.h>
 #include <Adafruit_NeoPixel.h>
 
 #include "aht20.h"
@@ -122,14 +118,12 @@ void setup() {
   Bridge.begin();
   Monitor.begin(115200);
 
-  Modulino.begin();        // on UNO Q the Qwiic port may need Modulino.begin(Wire1)
+  Modulino.begin();
   distance.begin();
   ring.begin();
   ring.setBrightness(255);
   set_flash(0);
   Bridge.provide("set_flash", set_flash);
-  // provide_safe: read_tof gira nel thread del loop, cosi' non usa l'I2C in parallelo alle letture
-  // di AHT20/SGP30 (se il Modulino finisce sullo stesso bus Wire).
   Bridge.provide_safe("read_tof", read_tof);
   Bridge.provide_safe("sgp30_set_baseline", sgp30_set_baseline);
 
@@ -143,8 +137,6 @@ void loop() {
   if (now - lastSampleMs < SAMPLE_PERIOD_MS) return;
   lastSampleMs = now;
 
-<<<<<<< HEAD
-=======
   if ((!ahtReady || !sgpReady) && now - lastRetryMs >= RETRY_PERIOD_MS) {
     lastRetryMs = now;
     initSensors();
@@ -162,7 +154,7 @@ void loop() {
   uint16_t eco2 = 0, tvoc = 0, h2Raw = 0, ethanolRaw = 0;
   bool sgpOk = false;
   if (sgpReady) {
-    // Compensazione d'umidita': senza un valore valido dall'AHT20 resta l'ultimo impostato.
+
     if (ahtOk) sgp.setAbsoluteHumidity(SGP30::absoluteHumidity(temperatureC, humidityPct));
     sgpOk = sgp.measureIAQ(eco2, tvoc) && sgp.measureRaw(h2Raw, ethanolRaw);
     sgpFailures = sgpOk ? 0 : sgpFailures + 1;
@@ -172,7 +164,6 @@ void loop() {
   Bridge.notify("sensor_data", uptimeSeconds(), ahtOk, sgpOk, temperatureC, humidityPct,
                 (int)tvoc, (int)eco2, (int)h2Raw, (int)ethanolRaw);
 
-  // millis() fresco: initSensors() puo' aver aggiornato lastBaselineMs dopo che `now` e' stato letto.
   if (sgpReady && millis() - lastBaselineMs >= BASELINE_PERIOD_MS) {
     lastBaselineMs = millis();
     uint16_t eco2Base, tvocBase;
@@ -180,5 +171,5 @@ void loop() {
       Bridge.notify("sgp30_baseline", uptimeSeconds(), (int)eco2Base, (int)tvocBase);
     }
   }
->>>>>>> 6c5bdb6b91d969ff736fc5852d8aa6ee388b52bc
+
 }
