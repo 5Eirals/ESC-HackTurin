@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ESC · Cassonetto smart</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Cassonetto <span id="bin-id">—</span></h1>
+        <p id="bin-address" class="muted">—</p>
+      </div>
+      <span id="connection" class="badge badge-off">Disconnesso</span>
+    </header>
+
+    <div id="alarm-banner" class="banner hidden" role="alert"></div>
+
+    <main>
+      <section aria-labelledby="live-title">
+        <h2 id="live-title">Letture in tempo reale</h2>
+        <div class="tiles">
+          <div class="tile"><span class="label">TVOC</span><span class="value" id="tvoc">—</span><span class="unit">ppb</span></div>
+          <div class="tile"><span class="label">eCO₂</span><span class="value" id="eco2">—</span><span class="unit">ppm</span></div>
+          <div class="tile"><span class="label">Temperatura</span><span class="value" id="temp">—</span><span class="unit">°C</span></div>
+          <div class="tile"><span class="label">Umidità</span><span class="value" id="rh">—</span><span class="unit">%</span></div>
+          <div class="tile"><span class="label">H₂ (grezzo)</span><span class="value" id="h2">—</span><span class="unit">a.u.</span></div>
+          <div class="tile"><span class="label">Etanolo (grezzo)</span><span class="value" id="ethanol">—</span><span class="unit">a.u.</span></div>
+        </div>
+        <p class="status-line">
+          <span id="sensor-aht" class="badge">AHT20 —</span>
+          <span id="sensor-sgp" class="badge">SGP30 —</span>
+          <span id="alarm-state" class="badge">Allarme —</span>
+          <span id="rest" class="muted"></span>
+        </p>
+
+        <div class="chart">
+          <div class="chart-head"><h3>TVOC (ultimi 10 minuti)</h3><span class="muted">tratteggio = valore a riposo</span></div>
+          <canvas id="chart-tvoc" height="160"></canvas>
+        </div>
+        <div class="chart">
+          <div class="chart-head"><h3>eCO₂ (ultimi 10 minuti)</h3></div>
+          <canvas id="chart-eco2" height="160"></canvas>
+        </div>
+      </section>
+
+      <section aria-labelledby="cc-title" class="control-center">
+        <h2 id="cc-title">Centro di controllo <small>(simulato)</small></h2>
+        <p class="muted">Eventi inviati dal cassonetto all'azienda di raccolta rifiuti.</p>
+        <ul id="events" class="events"><li class="empty muted">Nessun evento.</li></ul>
+      </section>
+    </main>
+
+    <script src="libs/socket.io.min.js"></script>
+    <script src="libs/arduino.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
