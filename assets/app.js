@@ -27,9 +27,41 @@ ui.on_message('snapshot', (data) => {
   renderAlarm(data.alarm);
   drawCharts();
   if (data.fill) renderFill(data.fill);
+  if (data.odor) renderOdor(data.odor);
 });
 
 ui.on_message('fill', renderFill);
+ui.on_message('odor', renderOdor);
+
+// --- Odore percepito (odor_index.py) -------------------------------------------------------
+const ODOR_LEVELS = {
+  green: ['Nessun odore', 'ok'],
+  yellow: ['Odore percepibile', 'warn'],
+  red: ['Puzza: intervento', 'bad'],
+};
+const REF_SOURCES = { avvio: "dall'avvio", svuotamento: 'dopo lo svuotamento', manuale: 'segnalato a mano' };
+
+function renderOdor(o) {
+  if (o.state === 'collecting') setBadge($('odor-badge'), 'Misura del riferimento…', 'warn');
+  else if (o.state === 'insufficient') setBadge($('odor-badge'), 'Dati in raccolta…', 'warn');
+  else if (o.level) setBadge($('odor-badge'), ...ODOR_LEVELS[o.level]);
+
+  $('odor-ratio').textContent = o.ratio === null ? '—' : `${fmt(o.ratio, 1)}×`;
+  $('odor-persistence').textContent = o.persistence === null ? '—' : fmt(o.persistence * 100);
+  $('odor-split').textContent = o.delta_h2 === null ? '—'
+    : `${fmt(Math.exp(o.delta_h2), 1)} / ${fmt(Math.exp(o.delta_ethanol), 1)}`;
+
+  const parts = [];
+  if (o.reference) parts.push(`Riferimento ${REF_SOURCES[o.reference.source] ?? ''}, ${fmt(o.reference.age_h, 1)} h fa`);
+  if (o.collecting) parts.push(`nuovo riferimento in misura (${fmt(o.collecting.progress * 100)}%)`);
+  $('odor-reference').textContent = parts.join(' · ') || 'Nessun riferimento';
+  $('odor-reset').disabled = Boolean(o.collecting);
+}
+
+$('odor-reset').addEventListener('click', () => {
+  $('odor-reset').disabled = true;
+  ui.send_message('mark_emptied', {});
+});
 
 ui.on_message('reading', (data) => {
   history.push(data.sample);

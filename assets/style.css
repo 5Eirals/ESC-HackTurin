@@ -153,6 +153,20 @@ section {
 
 /* --- Livello di riempimento ------------------------------------------------------------ */
 .fill { grid-column: 1 / -1; }
+.odor { grid-column: 1 / -1; }
+
+.button {
+  padding: 4px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.button:hover { background: var(--accent); color: var(--surface); }
+.button:disabled { opacity: 0.5; cursor: default; }
 
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 

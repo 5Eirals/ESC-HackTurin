@@ -68,6 +68,23 @@
         </details>
       </section>
 
+      <section aria-labelledby="odor-title" class="odor">
+        <div class="section-head">
+          <h2 id="odor-title">Odore percepito</h2>
+          <span id="odor-badge" class="badge">—</span>
+        </div>
+        <p class="muted">Sensore fuori dal cassonetto: mediana degli ultimi 30 minuti rispetto all'aria misurata dopo l'ultimo svuotamento.</p>
+        <div class="tiles">
+          <div class="tile"><span class="label">Aria rispetto al riferimento</span><span class="value" id="odor-ratio">—</span><span class="unit">volte</span></div>
+          <div class="tile"><span class="label">Sopra soglia</span><span class="value" id="odor-persistence">—</span><span class="unit">% degli ultimi 30 min</span></div>
+          <div class="tile"><span class="label">H₂ / etanolo</span><span class="value" id="odor-split">—</span><span class="unit">volte il riferimento</span></div>
+        </div>
+        <p class="status-line">
+          <span id="odor-reference" class="muted">—</span>
+          <button type="button" id="odor-reset" class="button">Cassonetto appena svuotato</button>
+        </p>
+      </section>
+
       <section aria-labelledby="live-title">
         <h2 id="live-title">Letture in tempo reale</h2>
         <div class="tiles">

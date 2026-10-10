@@ -29,6 +29,7 @@ from arduino.app_utils import App, Bridge
 from baseline_store import BaselineStore
 from fill_history import FillHistory
 from gas_alarm import GasAlarm
+from odor_index import OdorMonitor
 import simulate_fill
 
 try:
@@ -182,6 +183,10 @@ def save(data):
 ui = WebUI()
 baseline_store = BaselineStore(DATA_DIR / "sgp30_baseline.json")
 alarm = GasAlarm()
+# Odore percepito vicino al cassonetto (SGP30 fuori dal cassonetto): mediana 30 min dei segnali
+# grezzi rispetto all'aria misurata dopo l'ultimo svuotamento. Vedi odor_index.py.
+odor = OdorMonitor(DATA_DIR / "odor_reference.json")
+odor_lock = threading.Lock()   # campioni dal Bridge, nuovo riferimento dal loop o dalla dashboard
 
 lock = threading.Lock()
 history = deque(maxlen=HISTORY_SIZE)
@@ -240,6 +245,44 @@ def track_sensor_health(name: str, ok: bool):
                    f"{SENSOR_FAULT_AFTER} letture fallite consecutive: serve un controllo tecnico.")
 
 
+ODOR_EVENTS = {
+    "yellow": ("ODOR_NOTICEABLE", "warning", "Odore percepibile vicino al cassonetto"),
+    "red": ("ODOR_STRONG", "critical", "Puzza vicino al cassonetto: serve un intervento"),
+    "green": ("ODOR_CLEAR", "info", "Odore rientrato"),
+}
+REFERENCE_SOURCES = {"avvio": "all'avvio del sistema", "svuotamento": "dopo lo svuotamento",
+                     "manuale": "dopo lo svuotamento segnalato dalla dashboard"}
+
+
+def report_odor_event(event):
+    """Traduce gli eventi di OdorMonitor in eventi per il centro di controllo."""
+    if event[0] == "reference":
+        s = event[1]
+        push_event("ODOR_REFERENCE", "info", "Riferimento dell'aria aggiornato",
+                   f"Aria di riferimento misurata {REFERENCE_SOURCES.get(s['reference']['source'], '')}: "
+                   "da qui l'odore si misura rispetto a questi valori.")
+        return
+    _, old, new, s = event
+    kind, severity, title = ODOR_EVENTS[new]
+    values = {k: s[k] for k in ("ratio", "persistence", "delta_h2", "delta_ethanol", "temperature_c")}
+    if new == "green":
+        message = f"Aria {s['ratio']}x il riferimento (mediana {s['window_min']} min)."
+    else:
+        temp = f", {s['temperature_c']} °C" if s["temperature_c"] is not None else ""
+        message = (f"Aria {s['ratio']}x piu' carica del riferimento (mediana {s['window_min']} min), "
+                   f"sopra soglia per il {round(s['persistence'] * 100)}% del tempo{temp}.")
+    push_event(kind, severity, title, message, values)
+
+
+def new_odor_reference(source: str):
+    """Il cassonetto e' appena stato svuotato: si misura di nuovo l'aria di riferimento."""
+    with odor_lock:
+        odor.start_reference(source)
+        status = odor.status()
+    print(f"[{now_str()}] Odore: raccolta di un nuovo riferimento ({REFERENCE_SOURCES.get(source, source)})")
+    ui.send_message("odor", status)
+
+
 # --- Callback dal microcontrollore -------------------------------------------------------
 def on_sensor_data(uptime_s, aht_ok, sgp_ok, temp_c, rh_pct, tvoc_ppb, eco2_ppm, h2_raw, ethanol_raw):
     global last_sample
@@ -263,8 +306,13 @@ def on_sensor_data(uptime_s, aht_ok, sgp_ok, temp_c, rh_pct, tvoc_ppb, eco2_ppm,
     track_sensor_health("sgp30", bool(sgp_ok))
 
     result = None
+    odor_events, odor_status = [], None
     if sgp_ok and not warming:
         result = alarm.update(tvoc_ppb, sample["ts"])
+        with odor_lock:
+            odor_events = odor.add_sample(sample["ts"], h2_raw, ethanol_raw, sample["temperature_c"])
+            if odor.last_eval == sample["ts"]:   # livello ricalcolato (una volta al minuto)
+                odor_status = odor.last_status
     status = alarm.status(sample["tvoc_ppb"])
 
     with lock:
@@ -274,9 +322,13 @@ def on_sensor_data(uptime_s, aht_ok, sgp_ok, temp_c, rh_pct, tvoc_ppb, eco2_ppm,
     print(f"[{now_str()}] T={sample['temperature_c']}°C UR={sample['humidity_pct']}% "
           f"TVOC={sample['tvoc_ppb']} ppb eCO2={sample['eco2_ppm']} ppm "
           f"H2={sample['h2_raw']} EtOH={sample['ethanol_raw']} "
-          f"allarme={status['state']}{' (riscaldamento)' if warming else ''}")
+          f"allarme={status['state']} odore={odor.level or '—'}{' (riscaldamento)' if warming else ''}")
 
     ui.send_message("reading", {"sample": sample, "alarm": status})
+    if odor_status is not None:
+        ui.send_message("odor", odor_status)
+    for event in odor_events:
+        report_odor_event(event)
 
     values = {"tvoc_ppb": tvoc_ppb, "eco2_ppm": eco2_ppm,
               "rest_tvoc_ppb": status["rest_tvoc_ppb"], "temperature_c": sample["temperature_c"]}
@@ -323,10 +375,14 @@ def on_connect(sid):
         }
     with fill_lock:
         state["fill"] = fill_status()
+    with odor_lock:
+        state["odor"] = odor.status()
     ui.send_message("snapshot", state, room=sid)
 
 
 ui.on_connect(on_connect)
+# Pulsante della dashboard: "cassonetto appena svuotato" (utile se la visione non e' attiva)
+ui.on_message("mark_emptied", lambda sid, data: new_odor_reference("manuale"))
 
 
 # --- Visione: foto + analisi di profondita' -------------------------------------------------
@@ -412,6 +468,7 @@ def check_fill_events(emptied: bool):
         fill_alert = None
         push_event("BIN_EMPTIED", "info", "Cassonetto svuotato",
                    f"Livello sceso al {pct}%.", values)
+        new_odor_reference("svuotamento")
     level = fill_level_name(pct)
     if level == "full" and fill_alert != "full":
         fill_alert = "full"
