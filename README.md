@@ -20,8 +20,8 @@ Progetto per hackTurin 2026, challenge **City Signals**. Un cassonetto misura i 
 
 | Cartella | Contenuto |
 | :--- | :--- |
-| `sketch/` | Firmware MCU: `aht20.*` e `sgp30.*` (driver I2C minimali con controllo CRC, usano solo `Wire`), `sketch.ino` (lettura a 1 Hz e invio via Bridge) |
-| `python/` | `main.py` (logica, eventi, WebUI), `gas_alarm.py` (allarme relativo al valore a riposo), `baseline_store.py` (persistenza della baseline SGP30) |
+| `sketch/` | Firmware MCU: anello LED (flash) e Modulino Distance per la visione; `aht20.*` e `sgp30.*` (driver I2C minimali con controllo CRC, usano solo `Wire`), `sketch.ino` (lettura a 1 Hz e invio via Bridge) |
+| `python/` | `depth_fill.py` (livello di riempimento: camera + modello di profondità + ToF; modalità scelta con `VISION_MODE` in `main.py`), `main.py` (logica, eventi, WebUI), `gas_alarm.py` (allarme relativo al valore a riposo), `baseline_store.py` (persistenza della baseline SGP30) |
 | `assets/` | Dashboard: letture in tempo reale, grafici TVOC/eCO₂, centro di controllo simulato |
 
 ### Messaggi via Bridge
@@ -32,6 +32,8 @@ Progetto per hackTurin 2026, challenge **City Signals**. Un cassonetto misura i 
 | MCU → Python | `sgp30_started` | `uptime_s`, ogni volta che l'algoritmo SGP30 riparte |
 | MCU → Python | `sgp30_baseline` | `uptime_s, eco2_base, tvoc_base`, ogni 60 s |
 | Python → MCU | `sgp30_set_baseline` | `eco2_base, tvoc_base` → `bool` |
+| Python → MCU | `set_flash` | `level` (0-255), luminosità dell'anello LED |
+| Python → MCU | `read_tof` | → distanza in mm (mediana di 5), `-1` se non valida |
 
 ## Collegamento
 
@@ -41,7 +43,7 @@ Progetto per hackTurin 2026, challenge **City Signals**. Un cassonetto misura i 
 
 ## Avvio
 
-1. Aprire la cartella in **Arduino App Lab** e premere Run. Non servono librerie esterne: si usano solo `Wire` e `Arduino_RouterBridge`.
+1. Aprire la cartella in **Arduino App Lab** e premere Run. Per i sensori gas non servono librerie esterne (solo `Wire` e `Arduino_RouterBridge`); la parte di visione richiede `Modulino` e `Adafruit_NeoPixel` nello sketch e `onnxruntime`, `opencv-python-headless`, `numpy` in Python. Se mancano i pacchetti Python, la visione si disattiva e i sensori gas continuano a funzionare.
 2. Aprire la dashboard su `http://<ip-della-uno-q>:7000`.
 3. Nei primi ~15 s l'SGP30 è in riscaldamento (eCO₂ 400, TVOC 0). Nei 2 minuti successivi l'allarme impara il valore "a riposo".
 4. Test rapido: avvicinare un pennarello all'alcol al sensore. Dopo ~10 s compare l'evento `GAS_ALERT`.

@@ -1,9 +1,16 @@
 """ESC-HackTurin: app Linux della UNO Q.
 
-Riceve dal microcontrollore le letture di AHT20 + SGP30, decide (allarme gas relativo al
-valore a riposo), registra gli eventi per il "centro di controllo" simulato dell'azienda
-rifiuti e alimenta la dashboard web (brick WebUI, porta 7000).
+- Gas: riceve dal microcontrollore le letture di AHT20 + SGP30, decide (allarme gas relativo al
+  valore a riposo), registra gli eventi per il "centro di controllo" simulato dell'azienda
+  rifiuti e alimenta la dashboard web (brick WebUI, porta 7000).
+- Visione: avvia depth_fill.py (livello di riempimento con camera + ToF) nella modalita' scelta.
 """
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 import threading
 import time
@@ -20,6 +27,14 @@ from gas_alarm import GasAlarm
 # --- Configurazione -------------------------------------------------------------------
 BIN_ID = "TO-0001"
 BIN_ADDRESS = "Via Vincenzo Vela 17, Torino"
+
+# App Lab starts main.py without arguments, so choose the vision mode here:
+#   "snapshot"  -> save calib_frame.jpg to draw the masks on
+#   "calibrate" -> with the bin EMPTY, build the empty-bin depth map
+#   "run"       -> normal operation: measure every 15 minutes and log
+#   "predict"   -> estimate time until the bin is full
+#   None        -> vision disabled (gas sensors only)
+VISION_MODE = "snapshot"
 
 HISTORY_SIZE = 600            # campioni tenuti per i grafici (1/s -> 10 minuti)
 MAX_EVENTS = 100              # eventi tenuti nel centro di controllo
@@ -178,6 +193,23 @@ def on_connect(sid):
 ui.on_connect(on_connect)
 
 
+# --- Visione (depth_fill.py) ----------------------------------------------------------------
+def start_vision():
+    """Avvia la modalita' scelta in un thread separato, cosi' i sensori gas continuano a girare."""
+    if VISION_MODE is None:
+        return
+    try:
+        import depth_fill
+    except Exception as exc:  # es. onnxruntime/opencv non installati
+        print(f"[warn] depth_fill non disponibile ({exc}): visione disattivata, i sensori gas restano attivi")
+        return
+    mode = {"snapshot": depth_fill.snapshot,
+            "calibrate": depth_fill.calibrate,
+            "run": depth_fill.run,
+            "predict": depth_fill.predict}[VISION_MODE]
+    threading.Thread(target=mode, name=f"vision-{VISION_MODE}", daemon=True).start()
+
+
 # --- Loop principale ------------------------------------------------------------------------
 def loop():
     """Le chiamate verso lo sketch si fanno qui, mai dentro le callback del Bridge."""
@@ -198,4 +230,5 @@ def loop():
     time.sleep(1)
 
 
+start_vision()
 App.run(user_loop=loop)
