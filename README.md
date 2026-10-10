@@ -51,7 +51,7 @@ Progetto per hackTurin 2026, challenge **City Signals**. Un cassonetto misura i 
 
 ## Visione: livello di riempimento
 
-Ogni `CAPTURE_INTERVAL_S` (5 min) il loop di `main.py` accende l'anello LED, scatta una foto con il telefono (IP Webcam, `PHONE_IP`/`PORT`), legge il ToF e passa il fotogramma a `depth_fill.analyze()`. Depth Anything V2 stima la profondità relativa, che viene convertita in mm con due ancore (bordo del cassonetto e punto del ToF) e confrontata con la mappa del cassonetto vuoto. La modalità si sceglie con `VISION_MODE` in `main.py` (oppure con la variabile `MODE` o un file `python/mode.txt`):
+Ogni `CAPTURE_INTERVAL_S` (5 min) il loop di `main.py` accende l'anello LED, scatta una foto con il telefono (IP Webcam, `PHONE_IP`/`PORT`), legge il ToF e passa il fotogramma a `depth_fill.analyze()`. Depth Anything V2 stima la profondità relativa, che viene convertita in mm con due ancore (bordo del cassonetto e punto del ToF) e confrontata con la mappa del cassonetto vuoto. La modalità si sceglie con `VISION_MODE` in `main.py` (oppure con un argomento, la variabile `MODE` o un file `python/mode.txt`; `off` la disattiva):
 
 1. **`snapshot`**: salva `python/calib_frame.jpg` (640 px di larghezza). Su questa immagine si disegnano `bin_mask.png` (interno del cassonetto) e `rim_mask.png` (bordo), in bianco su nero, e si salvano nella cartella `python/`. Si impostano anche `tof_px`, `rim_dist_mm` e `bin_depth_mm` in `depth_fill.CFG`. Anche in `run`, se mancano le maschere, viene salvato `calib_frame.jpg`.
 2. **`calibrate`** (cassonetto VUOTO): crea `empty_depth.npy` e `calib_ab.json`, poi passa da sola a `run`.

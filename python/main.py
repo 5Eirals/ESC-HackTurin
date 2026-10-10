@@ -40,12 +40,12 @@ BIN_ID = "TO-0001"
 BIN_ADDRESS = "Via Vincenzo Vela 17, Torino"
 
 # App Lab avvia main.py senza argomenti: la modalita' della visione si sceglie qui
-# (oppure con la variabile d'ambiente MODE o con un file mode.txt accanto a main.py):
+# (oppure con un argomento, la variabile d'ambiente MODE o un file mode.txt accanto a main.py):
 #   "snapshot"  -> salva calib_frame.jpg su cui disegnare bin_mask.png e rim_mask.png
 #   "calibrate" -> con il cassonetto VUOTO crea la mappa di profondita' di riferimento,
 #                  poi passa da sola a "run"
 #   "run"       -> funzionamento normale: foto + analisi di profondita' ogni CAPTURE_INTERVAL_S
-#   None        -> visione disattivata (solo sensori gas)
+#   "off"/None  -> visione disattivata (solo sensori gas)
 VISION_MODE = "run"
 VISION_MODES = ("snapshot", "calibrate", "run")
 
@@ -305,13 +305,13 @@ Bridge.provide("sgp30_baseline", on_sgp30_baseline)
 # --- Dashboard ------------------------------------------------------------------------------
 def on_connect(sid):
     with lock:
-        snapshot = {
+        state = {
             "bin": {"id": BIN_ID, "address": BIN_ADDRESS},
             "history": list(history),
             "events": list(events),
             "alarm": alarm.status(last_sample["tvoc_ppb"] if last_sample else None),
         }
-    ui.send_message("snapshot", snapshot, room=sid)
+    ui.send_message("snapshot", state, room=sid)
 
 
 ui.on_connect(on_connect)
@@ -319,10 +319,13 @@ ui.on_connect(on_connect)
 
 # --- Visione: foto + analisi di profondita' -------------------------------------------------
 def pick_vision_mode():
-    mode = os.environ.get("MODE")                       # MODE=calibrate python main.py
+    mode = sys.argv[1] if len(sys.argv) > 1 else None   # python main.py calibrate
+    mode = mode or os.environ.get("MODE")               # MODE=calibrate python main.py
     if not mode and os.path.exists("mode.txt"):         # mode.txt con dentro "calibrate"
         mode = open("mode.txt").read().strip()
     mode = (mode or VISION_MODE or "").lower() or None
+    if mode == "off":
+        mode = None
     if mode is not None and mode not in VISION_MODES:
         print(f"[warn] modalita' visione '{mode}' sconosciuta (usa {', '.join(VISION_MODES)}): uso 'run'")
         mode = "run"
@@ -447,6 +450,9 @@ def loop():
 
 
 scheme = "https" if USE_HTTPS else "http"
-print(f"Visione: modalita' {vision_mode}, camera {scheme}://{PHONE_IP}:{PORT}, "
-      f"uno scatto ogni {CAPTURE_INTERVAL_S} s")
+if vision_mode is None:
+    print("Visione disattivata (solo sensori gas)")
+else:
+    print(f"Visione: modalita' {vision_mode}, camera {scheme}://{PHONE_IP}:{PORT}, "
+          f"uno scatto ogni {CAPTURE_INTERVAL_S} s")
 App.run(user_loop=loop)
