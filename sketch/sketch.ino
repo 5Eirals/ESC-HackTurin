@@ -11,6 +11,7 @@
 // Funzioni chiamabili da Python:
 //   set_flash(level)                          luminosita' dell'anello LED (0-255)
 //   read_tof() -> int                         distanza ToF in mm (mediana di 5), -1 se non valida
+//   camera_status(ok)                         esito dell'ultimo scatto del telefono (stampato sul Monitor)
 //   sgp30_set_baseline(eco2_base, tvoc_base) -> bool
 //
 // Library names/APIs to verify in your App Lab / Arduino IDE version:
@@ -52,6 +53,11 @@ int read_tof() {
     for (int j = i + 1; j < n; j++)
       if (v[j] < v[i]) { int t = v[i]; v[i] = v[j]; v[j] = t; }
   return v[n / 2];
+}
+
+// Python segnala l'esito di ogni scatto: utile per controllare la camera dal Monitor seriale.
+void camera_status(bool ok) {
+  Monitor.println(ok ? "Camera: foto ricevuta" : "Camera: ERRORE, nessuna foto dal telefono");
 }
 
 // ---------------------------------------------------------------- gas: AHT20 + SGP30
@@ -127,13 +133,12 @@ void setup() {
   // provide_safe: read_tof gira nel thread del loop, cosi' non usa l'I2C in parallelo alle letture
   // di AHT20/SGP30 (se il Modulino finisce sullo stesso bus Wire).
   Bridge.provide_safe("read_tof", read_tof);
-  Bridge.provide("camera_status", camera_status); // per controllare la camera
+  Bridge.provide_safe("camera_status", camera_status); // esito degli scatti sul Monitor
   Bridge.provide_safe("sgp30_set_baseline", sgp30_set_baseline);
 
   Wire.begin();
   scanI2C();
   initSensors();
->>>>>>> 487c4588a5105a68c34fe67c97c94030d975acc8
 }
 
 void loop() {

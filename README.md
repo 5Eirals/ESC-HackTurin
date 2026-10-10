@@ -34,6 +34,7 @@ Progetto per hackTurin 2026, challenge **City Signals**. Un cassonetto misura i 
 | Python → MCU | `sgp30_set_baseline` | `eco2_base, tvoc_base` → `bool` |
 | Python → MCU | `set_flash` | `level` (0-255), luminosità dell'anello LED |
 | Python → MCU | `read_tof` | → distanza in mm (mediana di 5), `-1` se non valida |
+| Python → MCU | `camera_status` | `ok` (bool), esito dell'ultimo scatto, stampato sul Monitor |
 
 ## Collegamento
 
@@ -47,6 +48,14 @@ Progetto per hackTurin 2026, challenge **City Signals**. Un cassonetto misura i 
 2. Aprire la dashboard su `http://<ip-della-uno-q>:7000`.
 3. Nei primi ~15 s l'SGP30 è in riscaldamento (eCO₂ 400, TVOC 0). Nei 2 minuti successivi l'allarme impara il valore "a riposo".
 4. Test rapido: avvicinare un pennarello all'alcol al sensore. Dopo ~10 s compare l'evento `GAS_ALERT`.
+
+## Visione: livello di riempimento
+
+Ogni `CAPTURE_INTERVAL_S` (5 min) il loop di `main.py` accende l'anello LED, scatta una foto con il telefono (IP Webcam, `PHONE_IP`/`PORT`), legge il ToF e passa il fotogramma a `depth_fill.analyze()`. Depth Anything V2 stima la profondità relativa, che viene convertita in mm con due ancore (bordo del cassonetto e punto del ToF) e confrontata con la mappa del cassonetto vuoto. La modalità si sceglie con `VISION_MODE` in `main.py` (oppure con la variabile `MODE` o un file `python/mode.txt`):
+
+1. **`snapshot`**: salva `python/calib_frame.jpg` (640 px di larghezza). Su questa immagine si disegnano `bin_mask.png` (interno del cassonetto) e `rim_mask.png` (bordo), in bianco su nero, e si salvano nella cartella `python/`. Si impostano anche `tof_px`, `rim_dist_mm` e `bin_depth_mm` in `depth_fill.CFG`. Anche in `run`, se mancano le maschere, viene salvato `calib_frame.jpg`.
+2. **`calibrate`** (cassonetto VUOTO): crea `empty_depth.npy` e `calib_ab.json`, poi passa da sola a `run`.
+3. **`run`**: misura il riempimento (mediana delle ultime 3 misure), i picchi (90° percentile) e lo svuotamento (calo maggiore del 30%), e stampa il risultato. L'ultimo risultato resta in `last_fill`.
 
 ## Parametri da tarare
 

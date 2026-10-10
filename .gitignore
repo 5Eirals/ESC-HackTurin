@@ -3,3 +3,6 @@ data/
 
 __pycache__/
 *.pyc
+
+# Foto scattate a runtime
+python/last_frame.jpg
