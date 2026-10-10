@@ -45,6 +45,7 @@ void setup() {
   set_flash(0);
   Bridge.provide("set_flash", set_flash);
   Bridge.provide("read_tof", read_tof);
+  Bridge.provide("camera_status", camera_status); // per controllare la camera
 }
 
 
