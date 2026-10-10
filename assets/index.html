@@ -18,6 +18,55 @@
     <div id="alarm-banner" class="banner hidden" role="alert"></div>
 
     <main>
+      <section aria-labelledby="fill-title" class="fill">
+        <div class="section-head">
+          <h2 id="fill-title">Livello di riempimento</h2>
+          <span id="fill-sim" class="badge badge-warn hidden">Dati simulati</span>
+        </div>
+
+        <div class="fill-top">
+          <div class="fill-hero">
+            <div class="bin-meter" id="fill-meter" role="meter" aria-labelledby="fill-title"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="bin-meter-fill" id="fill-meter-fill"></div>
+              <div class="bin-meter-mark" id="fill-meter-warn" title="Soglia quasi pieno"></div>
+            </div>
+            <div class="fill-hero-text">
+              <div><span class="hero" id="fill-pct">—</span><span class="hero-unit">%</span></div>
+              <span id="fill-badge" class="badge">—</span>
+              <p class="muted" id="fill-updated">Nessuna misura</p>
+            </div>
+          </div>
+
+          <div class="tiles fill-tiles">
+            <div class="tile"><span class="label">Pieno tra</span><span class="value" id="fill-eta">—</span><span class="unit" id="fill-eta-date">—</span></div>
+            <div class="tile"><span class="label">Ritmo previsto</span><span class="value" id="fill-rate">—</span><span class="unit" id="fill-method">%/giorno</span></div>
+            <div class="tile"><span class="label">Picchi (cumuli)</span><span class="value" id="fill-peak">—</span><span class="unit">%</span></div>
+            <div class="tile"><span class="label">Media alla raccolta</span><span class="value" id="fill-at-empty">—</span><span class="unit">% di riempimento, 30 giorni</span></div>
+          </div>
+        </div>
+
+        <div class="chart">
+          <div class="chart-head">
+            <h3>Riempimento, ultimi 30 giorni</h3>
+            <span class="legend"><span class="key key-line"></span>misurato <span class="key key-dash"></span>previsione</span>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="chart-fill" tabindex="0" aria-label="Grafico del riempimento negli ultimi 30 giorni con la previsione fino al pieno. Usa le frecce per scorrere le misure; i valori sono anche nella tabella sotto."></canvas>
+            <div id="fill-tooltip" class="tooltip hidden" role="status"></div>
+          </div>
+        </div>
+        <p class="status-line muted" id="fill-stats"></p>
+
+        <details class="table-view">
+          <summary>Tabella giornaliera</summary>
+          <table>
+            <thead><tr><th scope="col">Giorno</th><th scope="col">Massimo</th><th scope="col">Fine giornata</th><th scope="col">Svuotato</th></tr></thead>
+            <tbody id="fill-table"></tbody>
+          </table>
+        </details>
+      </section>
+
       <section aria-labelledby="live-title">
         <h2 id="live-title">Letture in tempo reale</h2>
         <div class="tiles">

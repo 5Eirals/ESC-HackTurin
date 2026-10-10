@@ -11,6 +11,8 @@
   --warning: #b7791f;
   --critical: #c53030;
   --critical-bg: #fde8e8;
+  --fill: #6b4fbb;
+  --grid: #e6e9e5;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -27,6 +29,8 @@
     --warning: #e0a84a;
     --critical: #f07070;
     --critical-bg: #3a1d1d;
+    --fill: #9a80ea;
+    --grid: #2a322e;
   }
 }
 
@@ -145,3 +149,86 @@ section {
 .event .meta { font-size: 0.75rem; color: var(--muted); }
 .event .title { font-weight: 600; margin: 2px 0; }
 .event .message { font-size: 0.85rem; margin: 0; }
+
+/* --- Livello di riempimento ------------------------------------------------------------ */
+.fill { grid-column: 1 / -1; }
+
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+
+.fill-top {
+  display: grid;
+  grid-template-columns: minmax(220px, auto) minmax(0, 1fr);
+  gap: 24px;
+  align-items: center;
+}
+
+@media (max-width: 700px) {
+  .fill-top { grid-template-columns: 1fr; }
+}
+
+.fill-hero { display: flex; align-items: center; gap: 16px; }
+.fill-hero-text { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+
+.hero { font-size: 3.5rem; font-weight: 600; line-height: 1; }
+.hero-unit { font-size: 1.4rem; font-weight: 600; color: var(--muted); margin-left: 2px; }
+
+/* Il cassonetto come meter verticale: il riempimento porta la gravita' (ok -> warning -> critical),
+   la parte vuota e' un passo piu' chiaro dello stesso colore. */
+.bin-meter {
+  --level: var(--accent);
+  position: relative;
+  width: 64px;
+  height: 120px;
+  border: 2px solid var(--level);
+  border-top-width: 6px;
+  border-radius: 4px 4px 10px 10px;
+  background: color-mix(in srgb, var(--level) 14%, var(--surface));
+  overflow: hidden;
+  flex: none;
+}
+.bin-meter.warn { --level: var(--warning); }
+.bin-meter.full { --level: var(--critical); }
+.bin-meter-fill {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 0%;
+  background: var(--level);
+  transition: height 0.6s ease;
+}
+.bin-meter-mark {
+  position: absolute;
+  left: 0; right: 0;
+  border-top: 2px solid var(--surface);
+}
+
+.fill-tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.fill-tiles .value { font-variant-numeric: normal; }
+
+.legend { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); }
+.key { display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--fill); }
+.key-dash { border-top-style: dashed; margin-left: 8px; }
+
+.chart-wrap { position: relative; }
+#chart-fill { width: 100%; height: 220px; display: block; border: 1px solid var(--border); border-radius: 8px; }
+#chart-fill:focus-visible { outline: 2px solid var(--fill); outline-offset: 2px; }
+
+.tooltip {
+  position: absolute;
+  top: 8px;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.12);
+  white-space: nowrap;
+}
+.tooltip strong { font-size: 1rem; }
+.tooltip .key { margin-right: 6px; vertical-align: middle; }
+
+.table-view { margin-top: 8px; font-size: 0.85rem; }
+.table-view summary { cursor: pointer; color: var(--muted); }
+.table-view table { border-collapse: collapse; margin-top: 8px; width: 100%; max-width: 560px; }
+.table-view th, .table-view td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.table-view th:first-child, .table-view td:first-child { text-align: left; }

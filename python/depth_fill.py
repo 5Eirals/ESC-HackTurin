@@ -7,8 +7,7 @@ Runs on the Linux side of the Arduino UNO Q.
 Usage (standalone, USB camera):
   python depth_fill.py snapshot    # save calib_frame.jpg to draw the masks on
   python depth_fill.py calibrate   # with the bin EMPTY: builds empty_depth.npy
-  python depth_fill.py run         # periodic measurement + logging
-  python depth_fill.py predict     # estimate time until the bin is full
+  python depth_fill.py run         # periodic measurement + logging + time-to-full prediction
 
 From main.py (phone camera): the frame is passed in as `img`, e.g.
   img = decode_jpeg(jpeg_bytes); snapshot(img) / calibrate(img) / analyze(img, tracker)
@@ -22,10 +21,12 @@ How it works:
   Then:  1/Z = a * d + b   ->  metric depth Z for every pixel.
   Fill height = (empty-bin depth) - (current depth), inside the bin mask.
 """
-import csv, json, os, sys, time
+import json, os, sys, time
 import numpy as np
 import cv2
 import onnxruntime as ort
+
+from fill_history import FillHistory
 
 CFG = {
     "model": "depth_anything_v2_vits_252.onnx",
@@ -39,7 +40,7 @@ CFG = {
     "bin_depth_mm": 1100,         # rim -> floor, measured once
     "empty_depth": "empty_depth.npy",
     "interval_s": 900,            # one measurement every 15 minutes
-    "log": "fill_log.csv",
+    "log": os.path.join("..", "data", "fill_log.csv"),  # shared with main.py / dashboard
     "emptied_drop_pct": 30,       # a drop bigger than this = bin was emptied
     "work_width": 640,            # frames are resized to this width (masks + tof_px refer to it)
     "calib_frame": "calib_frame.jpg",
@@ -152,8 +153,9 @@ def load_fallback():
 # ---------------------------------------------------------------- analysis
 class FillTracker:
     """Temporal median filter over the last 3 measurements + emptying detection."""
-    def __init__(self):
-        self.history, self.last = [], None
+    def __init__(self, last=None):
+        # last: previous level (e.g. from the log), so an emptying across a restart is detected
+        self.history, self.last = ([last] if last is not None else []), last
 
     def update(self, fill_pct):
         emptied = self.last is not None and self.last - fill_pct > CFG["emptied_drop_pct"]
@@ -194,8 +196,8 @@ def analyze(img, tracker, tof_distance_mm=None):
         "emptied": emptied,
         "surface_mm": round(float(np.median(z[binm]))),  # camera -> waste surface
         "rim_mm": round(float(np.median(z[rim]))),       # sanity check vs rim_dist_mm
-        "tof_mm": tof_distance_mm,
-        "tof_used": fb is None or ab[1] != fb[1],        # False = rim-only fallback fit
+        "tof_mm": int(tof_distance_mm),
+        "tof_used": bool(fb is None or ab[1] != fb[1]),  # False = rim-only fallback fit
         "inference_ms": round(infer_ms),
     }
 
@@ -219,42 +221,34 @@ def calibrate(img=None, tof_distance_mm=None):
           f"– expected about {CFG['rim_dist_mm'] + CFG['bin_depth_mm']} mm")
     return floor
 
-def run():
-    tracker = FillTracker()
-    new = not os.path.exists(CFG["log"])
-    with open(CFG["log"], "a", newline="") as f:
-        w = csv.writer(f)
-        if new:
-            w.writerow(["timestamp", "fill_pct", "peak_pct", "event"])
-        while True:
-            try:
-                r = analyze(capture(), tracker)
-                event = "emptied" if r["emptied"] else ""
-                w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), r["fill_pct"], r["peak_pct"], event])
-                f.flush()
-                print(f"fill {r['fill_pct']}%  peak {r['peak_pct']}%  {event}")
-            except Exception as e:
-                print("[error]", e)
-            time.sleep(CFG["interval_s"])
+def describe_prediction(p):
+    """Human-readable time-to-full line (used by run() and main.py)."""
+    if p is None:
+        return "not enough data since last emptying for a prediction"
+    if p["full_at"] is None:
+        return f"fill rate {p['rate_pct_day']}%/day – not full within 30 days"
+    when = time.strftime("%a %d/%m %H:%M", time.localtime(p["full_at"]))
+    return f"fill rate {p['rate_pct_day']}%/day – full in about {p['hours_left']} h ({when}, {p['method']})"
 
-def predict():
-    """Linear fill rate since the last emptying -> hours until 100%."""
-    rows = list(csv.DictReader(open(CFG["log"])))
-    start = max((i for i, r in enumerate(rows) if r["event"] == "emptied"), default=0)
-    rows = rows[start:]
-    if len(rows) < 4:
-        print("Not enough data since last emptying."); return
-    t = np.array([time.mktime(time.strptime(r["timestamp"], "%Y-%m-%d %H:%M:%S")) for r in rows])
-    y = np.array([float(r["fill_pct"]) for r in rows])
-    rate, intercept = np.polyfit((t - t[0]) / 3600, y, 1)       # % per hour
-    if rate <= 0:
-        print("Fill level not rising."); return
-    hours_left = (100 - y[-1]) / rate
-    print(f"Fill rate {rate:.2f}%/h – full in about {hours_left:.1f} h")
+def run():
+    """Measure every interval_s, log to CFG["log"] and predict when the bin will be full
+    (run and predict merged: the prediction is refreshed after every measurement)."""
+    history = FillHistory(CFG["log"])
+    tracker = FillTracker(history.last["fill_pct"] if history.last else None)
+    while True:
+        try:
+            r = analyze(capture(), tracker)
+            event = "emptied" if r["emptied"] else ""
+            history.append(r["ts"], r["fill_pct"], r["peak_pct"], event)
+            print(f"fill {r['fill_pct']}%  peak {r['peak_pct']}%  {event}")
+            print("  " + describe_prediction(history.predict()))
+        except Exception as e:
+            print("[error]", e)
+        time.sleep(CFG["interval_s"])
 
 if __name__ == "__main__":
     # Resolve model, masks, calibration and log next to this script,
     # whatever folder the script is launched from.
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    {"snapshot": snapshot, "calibrate": calibrate, "run": run, "predict": predict}.get(
+    {"snapshot": snapshot, "calibrate": calibrate, "run": run}.get(
         sys.argv[1] if len(sys.argv) > 1 else "run", run)()

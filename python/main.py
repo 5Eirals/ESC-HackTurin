@@ -5,7 +5,8 @@
   rifiuti e alimenta la dashboard web (brick WebUI, porta 7000).
 - Visione: nel loop scatta una foto con il telefono (IP camera) e con il flash dell'anello LED,
   legge il ToF e stima la profondita' con Depth Anything V2 (depth_fill.py) per ricavare il
-  livello di riempimento.
+  livello di riempimento. Ogni misura finisce in data/fill_log.csv (fill_history.py), da cui
+  si prevede quando il cassonetto sara' pieno; livello e previsione vanno sulla dashboard.
 """
 
 import base64
@@ -26,7 +27,9 @@ from arduino.app_bricks.web_ui import WebUI
 from arduino.app_utils import App, Bridge
 
 from baseline_store import BaselineStore
+from fill_history import FillHistory
 from gas_alarm import GasAlarm
+import simulate_fill
 
 try:
     import depth_fill
@@ -60,6 +63,13 @@ USE_HTTPS = True
 USER, PASSWORD = "", ""     # solo se hai impostato login/password nell'app
 
 SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_frame.jpg")
+
+# Livello di riempimento
+FILL_WARN_PCT = 80           # evento "quasi pieno"
+FILL_FULL_PCT = 95           # evento "pieno"
+# Se non c'e' ancora nessuna misura, genera un mese di dati INVENTATI (simulate_fill.py) per
+# mostrare previsione e grafico. Mettere False sul cassonetto vero.
+SIMULATED_HISTORY = True
 
 HISTORY_SIZE = 600            # campioni tenuti per i grafici (1/s -> 10 minuti)
 MAX_EVENTS = 100              # eventi tenuti nel centro di controllo
@@ -311,6 +321,8 @@ def on_connect(sid):
             "events": list(events),
             "alarm": alarm.status(last_sample["tvoc_ppb"] if last_sample else None),
         }
+    with fill_lock:
+        state["fill"] = fill_status()
     ui.send_message("snapshot", state, room=sid)
 
 
@@ -333,9 +345,84 @@ def pick_vision_mode():
 
 
 vision_mode = pick_vision_mode()
-fill_tracker = depth_fill.FillTracker() if depth_fill else None
 last_capture_t = None   # time.monotonic() dell'ultimo scatto
-last_fill = None        # ultimo risultato di depth_fill.analyze() (salvato nel prossimo task)
+last_fill = None        # ultimo risultato di depth_fill.analyze() (diagnostica per la dashboard)
+
+fill_lock = threading.Lock()   # fill_history e' scritto dal loop e letto alla connessione della dashboard
+fill_history = FillHistory(DATA_DIR / "fill_log.csv")
+if SIMULATED_HISTORY and not fill_history.rows:
+    n = simulate_fill.generate(fill_history.path)
+    fill_history.load()
+    print(f"[{now_str()}] Nessuna misura di riempimento: generati {n} campioni simulati (30 giorni)")
+fill_tracker = (depth_fill.FillTracker(fill_history.last["fill_pct"] if fill_history.last else None)
+                if depth_fill else None)
+fill_alert = None       # ultimo livello segnalato al centro di controllo: None | "warn" | "full"
+fill_startup_check = True  # al primo giro del loop segnala lo stato iniziale (es. gia' quasi pieno)
+
+
+def fill_level_name(pct):
+    if pct is None:
+        return "unknown"
+    if pct >= FILL_FULL_PCT:
+        return "full"
+    if pct >= FILL_WARN_PCT:
+        return "warn"
+    return "ok"
+
+
+def fill_status(include_chart=True) -> dict:
+    """Tutto quello che serve alla sezione "Livello di riempimento" della dashboard."""
+    last = fill_history.last
+    status = {
+        "last": None if last is None else {
+            "ts": last["ts"], "fill_pct": last["fill_pct"], "peak_pct": last["peak_pct"],
+            "source": last["source"], "level": fill_level_name(last["fill_pct"]),
+        },
+        "prediction": fill_history.predict(),
+        "stats": fill_history.stats(),
+        "thresholds": {"warn": FILL_WARN_PCT, "full": FILL_FULL_PCT},
+        "diagnostics": last_fill,
+        "vision_mode": vision_mode,
+    }
+    if include_chart:
+        status["chart"] = fill_history.chart()
+    return status
+
+
+def describe_eta(prediction) -> str:
+    if not prediction:
+        return "previsione non ancora disponibile"
+    if prediction["full_at"] is None:
+        return "non si riempie nei prossimi 30 giorni"
+    when = datetime.fromtimestamp(prediction["full_at"]).strftime("%a %d/%m %H:%M")
+    return f"pieno tra circa {prediction['hours_left']} h ({when})"
+
+
+def check_fill_events(emptied: bool):
+    """Eventi per il centro di controllo: svuotato, quasi pieno, pieno (una volta per ciclo)."""
+    global fill_alert
+    last = fill_history.last
+    if last is None:
+        return
+    pct = last["fill_pct"]
+    prediction = fill_history.predict()
+    values = {"fill_pct": pct, "peak_pct": last["peak_pct"],
+              "hours_left": prediction["hours_left"] if prediction else None}
+    if emptied:
+        fill_alert = None
+        push_event("BIN_EMPTIED", "info", "Cassonetto svuotato",
+                   f"Livello sceso al {pct}%.", values)
+    level = fill_level_name(pct)
+    if level == "full" and fill_alert != "full":
+        fill_alert = "full"
+        push_event("BIN_FULL", "critical", "Cassonetto pieno",
+                   f"Riempimento {pct}% (picchi {last['peak_pct']}%): serve una raccolta.", values)
+    elif level == "warn" and fill_alert is None:
+        fill_alert = "warn"
+        push_event("BIN_ALMOST_FULL", "warning", "Cassonetto quasi pieno",
+                   f"Riempimento {pct}%, {describe_eta(prediction)}.", values)
+    elif level == "ok" and pct < FILL_WARN_PCT - 10:
+        fill_alert = None   # isteresi: si riarma solo quando il livello scende davvero
 
 
 def mcu_call(name, *args, timeout=5):
@@ -416,17 +503,25 @@ def vision_step():
         print(f"[{now_str()}] Analisi di profondita' fallita: {exc}")
         return
     last_fill = result
+    with fill_lock:
+        saved = fill_history.append(result["ts"], result["fill_pct"], result["peak_pct"],
+                                    "emptied" if result["emptied"] else "")
+        status = fill_status()
     print(f"[{now_str()}] Riempimento {result['fill_pct']}% (grezzo {result['raw_fill_pct']}%, "
           f"picchi {result['peak_pct']}%), superficie a {result['surface_mm']} mm, "
           f"bordo a {result['rim_mm']} mm, ToF {'usato' if result['tof_used'] else 'non valido'}, "
           f"inferenza {result['inference_ms']} ms"
-          f"{' - CASSONETTO SVUOTATO' if result['emptied'] else ''}")
+          f"{' - CASSONETTO SVUOTATO' if result['emptied'] else ''}"
+          f"{'' if saved else ' (NON salvato su file)'}")
+    print(f"[{now_str()}] Previsione: {describe_eta(status['prediction'])}")
+    ui.send_message("fill", status)
+    check_fill_events(result["emptied"])
 
 
 # --- Loop principale ------------------------------------------------------------------------
 def loop():
     """Le chiamate verso lo sketch si fanno qui, mai dentro le callback del Bridge."""
-    global need_restore, baseline_restored, last_capture_t
+    global need_restore, baseline_restored, last_capture_t, fill_startup_check
     if need_restore:
         need_restore = False
         stored = baseline_store.load()
@@ -441,6 +536,11 @@ def loop():
                 ok = False
             baseline_restored = bool(ok)
 
+    if fill_startup_check:  # qui e non all'avvio: la WebUI e' gia' partita
+        fill_startup_check = False
+        with fill_lock:
+            check_fill_events(False)
+
     if vision_mode is not None and (last_capture_t is None
                                     or time.monotonic() - last_capture_t >= CAPTURE_INTERVAL_S):
         last_capture_t = time.monotonic()
@@ -448,6 +548,9 @@ def loop():
 
     time.sleep(1)
 
+
+print(f"[{now_str()}] Riempimento: {fill_history.last['fill_pct'] if fill_history.last else '—'}%, "
+      f"{describe_eta(fill_history.predict())}")
 
 scheme = "https" if USE_HTTPS else "http"
 if vision_mode is None:
