@@ -1,47 +1,25 @@
-from arduino.app_utils import *
-import os, sys
-import base64
-import http.client
-import ssl
-import time
-
 """ESC-HackTurin: app Linux della UNO Q.
 
 - Gas: riceve dal microcontrollore le letture di AHT20 + SGP30, decide (allarme gas relativo al
   valore a riposo), registra gli eventi per il "centro di controllo" simulato dell'azienda
   rifiuti e alimenta la dashboard web (brick WebUI, porta 7000).
 - Visione: avvia depth_fill.py (livello di riempimento con camera + ToF) nella modalita' scelta.
+- Camera del telefono: acquisisce un fotogramma ogni INTERVAL secondi e ne segnala lo stato allo sketch.
 """
 
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
+import base64
+import http.client
+import os
+import ssl
+import sys
 import threading
 import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-MODES = {"snapshot": depth_fill.snapshot,
-         "calibrate": depth_fill.calibrate,
-         "run": depth_fill.run,
-         "predict": depth_fill.predict}
-
-def pick_mode():
-    if len(sys.argv) > 1:                       # python main.py calibrate
-        return sys.argv[1]
-    if os.environ.get("MODE"):                  # MODE=calibrate python main.py
-        return os.environ["MODE"]
-    if os.path.exists("mode.txt"):              # mode.txt containing "calibrate"
-        return open("mode.txt").read().strip()
-    return "run"                                # normal operation
-
-mode = pick_mode().lower()
-if mode not in MODES:
-    sys.exit(f"Unknown mode '{mode}'. Use one of: {', '.join(MODES)}")
-print(f"Starting in mode: {mode}")
-MODES[mode]()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 from arduino.app_bricks.web_ui import WebUI
 from arduino.app_utils import App, Bridge
@@ -53,21 +31,35 @@ from gas_alarm import GasAlarm
 BIN_ID = "TO-0001"
 BIN_ADDRESS = "Via Vincenzo Vela 17, Torino"
 
-# App Lab starts main.py without arguments, so choose the vision mode here:
+HISTORY_SIZE = 600            # campioni tenuti per i grafici (1/s -> 10 minuti)
+MAX_EVENTS = 100              # eventi tenuti nel centro di controllo
+SGP30_WARMUP_S = 15           # dopo l'avvio l'SGP30 restituisce valori fissi per ~15 s
+BASELINE_MIN_RUNTIME_S = 600  # salva la baseline solo dopo 10 min di funzionamento continuo
+SENSOR_FAULT_AFTER = 3        # letture fallite consecutive prima di segnalare un guasto
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+# --- Visione: scelta della modalita' (depth_fill.py) ------------------------------------
 #   "snapshot"  -> save calib_frame.jpg to draw the masks on
 #   "calibrate" -> with the bin EMPTY, build the empty-bin depth map
 #   "run"       -> normal operation: measure every 15 minutes and log
 #   "predict"   -> estimate time until the bin is full
-#   None        -> vision disabled (gas sensors only)
-VISION_MODE = "snapshot"
+#   "off"       -> vision disabled (gas sensors only)
+VISION_MODES = ("snapshot", "calibrate", "run", "predict")
 
 
-{"snapshot": depth_fill.snapshot,
- "calibrate": depth_fill.calibrate,
- "run": depth_fill.run,
- "predict": depth_fill.predict}[MODE]()
+def pick_mode():
+    if len(sys.argv) > 1:                       # python main.py calibrate
+        return sys.argv[1]
+    if os.environ.get("MODE"):                  # MODE=calibrate python main.py
+        return os.environ["MODE"]
+    if os.path.exists("mode.txt"):              # mode.txt containing "calibrate"
+        return open("mode.txt").read().strip()
+    return "run"                                # normal operation
 
 
+# --- Camera del telefono ----------------------------------------------------------------
 PHONE_IP = "192.168.23.177"
 PORT = 4444
 USE_HTTPS = True
@@ -173,13 +165,6 @@ def save(data):
     except OSError as e:
         print("  (fotogramma non salvato:", e, ")")
 
-HISTORY_SIZE = 600            # campioni tenuti per i grafici (1/s -> 10 minuti)
-MAX_EVENTS = 100              # eventi tenuti nel centro di controllo
-SGP30_WARMUP_S = 15           # dopo l'avvio l'SGP30 restituisce valori fissi per ~15 s
-BASELINE_MIN_RUNTIME_S = 600  # salva la baseline solo dopo 10 min di funzionamento continuo
-SENSOR_FAULT_AFTER = 3        # letture fallite consecutive prima di segnalare un guasto
-
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # --- Stato ------------------------------------------------------------------------------
 ui = WebUI()
@@ -318,13 +303,13 @@ Bridge.provide("sgp30_baseline", on_sgp30_baseline)
 # --- Dashboard ------------------------------------------------------------------------------
 def on_connect(sid):
     with lock:
-        snapshot = {
+        state = {
             "bin": {"id": BIN_ID, "address": BIN_ADDRESS},
             "history": list(history),
             "events": list(events),
             "alarm": alarm.status(last_sample["tvoc_ppb"] if last_sample else None),
         }
-    ui.send_message("snapshot", snapshot, room=sid)
+    ui.send_message("snapshot", state, room=sid)
 
 
 ui.on_connect(on_connect)
@@ -332,19 +317,22 @@ ui.on_connect(on_connect)
 
 # --- Visione (depth_fill.py) ----------------------------------------------------------------
 def start_vision():
-    """Avvia la modalita' scelta in un thread separato, cosi' i sensori gas continuano a girare."""
-    if VISION_MODE is None:
+    """Avvia la modalita' scelta in un thread separato, cosi' gas e camera continuano a girare."""
+    mode = pick_mode().lower()
+    if mode == "off":
+        print("Visione disattivata (mode 'off')")
+        return
+    if mode not in VISION_MODES:
+        print(f"[warn] Modalita' visione sconosciuta '{mode}' (valide: {', '.join(VISION_MODES)}, off): "
+              "visione disattivata")
         return
     try:
         import depth_fill
     except Exception as exc:  # es. onnxruntime/opencv non installati
-        print(f"[warn] depth_fill non disponibile ({exc}): visione disattivata, i sensori gas restano attivi")
+        print(f"[warn] depth_fill non disponibile ({exc}): visione disattivata, gas e camera restano attivi")
         return
-    mode = {"snapshot": depth_fill.snapshot,
-            "calibrate": depth_fill.calibrate,
-            "run": depth_fill.run,
-            "predict": depth_fill.predict}[VISION_MODE]
-    threading.Thread(target=mode, name=f"vision-{VISION_MODE}", daemon=True).start()
+    print(f"Visione avviata in modalita': {mode}")
+    threading.Thread(target=getattr(depth_fill, mode), name=f"vision-{mode}", daemon=True).start()
 
 
 # --- Loop principale ------------------------------------------------------------------------
@@ -384,6 +372,7 @@ def loop():
     except Exception as e:
         print("Bridge non pronto:", e)
     time.sleep(INTERVAL)
+
 
 start_vision()
 scheme = "https" if USE_HTTPS else "http"

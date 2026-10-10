@@ -11,6 +11,7 @@
 // Funzioni chiamabili da Python:
 //   set_flash(level)                          luminosita' dell'anello LED (0-255)
 //   read_tof() -> int                         distanza ToF in mm (mediana di 5), -1 se non valida
+//   camera_status(ok)                         stampa nel Monitor se la camera del telefono risponde
 //   sgp30_set_baseline(eco2_base, tvoc_base) -> bool
 //
 // Library names/APIs to verify in your App Lab / Arduino IDE version:
@@ -52,6 +53,11 @@ int read_tof() {
     for (int j = i + 1; j < n; j++)
       if (v[j] < v[i]) { int t = v[i]; v[i] = v[j]; v[j] = t; }
   return v[n / 2];
+}
+
+// Chiamata da Python dopo ogni tentativo di acquisizione dalla camera del telefono.
+void camera_status(bool ok) {
+  Monitor.println(ok ? "Camera: OK" : "Camera: ERRORE");
 }
 
 // ---------------------------------------------------------------- gas: AHT20 + SGP30
@@ -133,7 +139,6 @@ void setup() {
   Wire.begin();
   scanI2C();
   initSensors();
->>>>>>> 487c4588a5105a68c34fe67c97c94030d975acc8
 }
 
 void loop() {
