@@ -7,9 +7,12 @@ name: ESC-HackTurin
 # The icon for the application, can be an emoji or a short string.
 icon: 🌍
 
+description: Cassonetto smart - gas (SGP30) e temperatura/umidità (AHT20) con allarmi verso un centro di controllo simulato.
+
 # A list of network ports that the application exposes.
 # Example: [80, 443]
 ports: []
 
 # A list of bricks used by this application.
-bricks: []
+bricks:
+  - arduino:web_ui
