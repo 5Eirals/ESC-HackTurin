@@ -7,7 +7,7 @@
 //    look in the Library Manager for a WS28xx library that supports it.
 
 #include <Arduino_RouterBridge.h>
-#include <Modulino.h>
+#include <Arduino_Modulino.h>
 #include <Adafruit_NeoPixel.h>
 
 #define RING_PIN 6        // Grove D6 on the Base Shield
