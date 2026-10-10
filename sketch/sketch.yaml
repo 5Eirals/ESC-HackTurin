@@ -13,6 +13,11 @@ profiles:
       - dependency: STM32duino VL53L4CD (1.0.5)
       - dependency: STM32duino VL53L4ED (1.0.1)
       - Adafruit NeoPixel (1.15.5)
+      - dependency: Arduino_RPClite (0.3.1)
+      - Arduino_RouterBridge (0.4.3)
+      - dependency: ArxContainer (0.7.0)
+      - dependency: ArxTypeTraits (0.3.2)
+      - dependency: DebugLog (0.8.4)
+      - dependency: MsgPack (0.4.2)
 
 default_profile: default
-<
