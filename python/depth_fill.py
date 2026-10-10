@@ -4,11 +4,14 @@ Runs on the Linux side of the Arduino UNO Q.
 
   pip install onnxruntime opencv-python-headless numpy
 
-Usage:
+Usage (standalone, USB camera):
   python depth_fill.py snapshot    # save calib_frame.jpg to draw the masks on
   python depth_fill.py calibrate   # with the bin EMPTY: builds empty_depth.npy
   python depth_fill.py run         # periodic measurement + logging
   python depth_fill.py predict     # estimate time until the bin is full
+
+From main.py (phone camera): the frame is passed in as `img`, e.g.
+  img = decode_jpeg(jpeg_bytes); snapshot(img) / calibrate(img) / analyze(img, tracker)
 
 How it works:
   The model outputs RELATIVE inverse depth (bigger = closer), with an unknown
@@ -38,6 +41,9 @@ CFG = {
     "interval_s": 900,            # one measurement every 15 minutes
     "log": "fill_log.csv",
     "emptied_drop_pct": 30,       # a drop bigger than this = bin was emptied
+    "work_width": 640,            # frames are resized to this width (masks + tof_px refer to it)
+    "calib_frame": "calib_frame.jpg",
+    "calib_ab": "calib_ab.json",
 }
 
 # ---------------------------------------------------------------- MCU bridge
@@ -66,7 +72,23 @@ def capture():
     frames = [f for f in frames if f is not None]
     if not frames:
         raise RuntimeError("No frames from camera")
-    return np.median(np.stack(frames), axis=0).astype(np.uint8)  # denoise
+    return to_work_size(np.median(np.stack(frames), axis=0).astype(np.uint8))  # denoise
+
+def to_work_size(img):
+    """Resize to CFG["work_width"] keeping the aspect ratio, so that masks and tof_px
+    always refer to the same resolution as calib_frame.jpg."""
+    h, w = img.shape[:2]
+    W = CFG["work_width"]
+    if w == W:
+        return img
+    return cv2.resize(img, (W, round(h * W / w)), interpolation=cv2.INTER_AREA)
+
+def decode_jpeg(data):
+    """JPEG bytes (e.g. from the phone camera) -> BGR image at work size."""
+    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("JPEG could not be decoded")
+    return to_work_size(img)
 
 # ---------------------------------------------------------------- inference
 _sess = None
@@ -94,6 +116,8 @@ def anchor_value(d, mask):
 
 def tof_value(d):
     x, y = CFG["tof_px"]; r = CFG["tof_radius"]
+    h, w = d.shape[:2]
+    x, y = min(max(x, r), w - r), min(max(y, r), h - r)       # stay inside the frame
     return float(np.median(d[y - r:y + r, x - r:x + r]))
 
 def to_metric(d, rim_mask, tof_distance_mm, fallback=None):
@@ -113,41 +137,90 @@ def to_metric(d, rim_mask, tof_distance_mm, fallback=None):
     a = (1 / z_rim - b) / d_rim
     return 1.0 / np.clip(a * d + b, 1e-6, None), (a, b)
 
-# ---------------------------------------------------------------- modes
-def snapshot():
-    cv2.imwrite("calib_frame.jpg", capture())
-    print("Saved calib_frame.jpg – paint bin_mask.png and rim_mask.png on it (white = area).")
+# ---------------------------------------------------------------- calibration state
+def missing_calibration():
+    """Files still needed before fill can be measured (empty list = ready)."""
+    need = [CFG["bin_mask"], CFG["rim_mask"], CFG["empty_depth"]]
+    return [p for p in need if not os.path.exists(p)]
 
-def calibrate():
-    img = capture()
-    d = infer(img)
-    rim = load_mask(CFG["rim_mask"], d.shape)
-    z, ab = to_metric(d, rim, tof_mm())
-    np.save(CFG["empty_depth"], z)
-    json.dump({"a": ab[0], "b": ab[1]}, open("calib_ab.json", "w"))
-    binm = load_mask(CFG["bin_mask"], d.shape)
-    print(f"Empty-bin floor depth (median): {np.median(z[binm]):.0f} mm "
-          f"– expected about {CFG['rim_dist_mm'] + CFG['bin_depth_mm']} mm")
+def load_fallback():
+    if not os.path.exists(CFG["calib_ab"]):
+        return None
+    ab = json.load(open(CFG["calib_ab"]))
+    return ab["a"], ab["b"]
 
-def measure_once(history):
-    img = capture()
+# ---------------------------------------------------------------- analysis
+class FillTracker:
+    """Temporal median filter over the last 3 measurements + emptying detection."""
+    def __init__(self):
+        self.history, self.last = [], None
+
+    def update(self, fill_pct):
+        emptied = self.last is not None and self.last - fill_pct > CFG["emptied_drop_pct"]
+        if emptied:
+            self.history = []
+        self.history.append(fill_pct)
+        smooth = round(float(np.median(self.history[-3:])), 1)
+        self.last = smooth
+        return smooth, emptied
+
+def analyze(img, tracker, tof_distance_mm=None):
+    """Depth analysis of one frame -> fill level of the bin.
+
+    img: BGR image at work size (capture() or decode_jpeg()).
+    Returns a dict with fill/peak percentage, depth figures and diagnostics."""
+    if tof_distance_mm is None:
+        tof_distance_mm = tof_mm()
+    t0 = time.time()
     d = infer(img)
+    infer_ms = (time.time() - t0) * 1000
     rim = load_mask(CFG["rim_mask"], d.shape)
     binm = load_mask(CFG["bin_mask"], d.shape)
     empty_z = np.load(CFG["empty_depth"])
-    fb = json.load(open("calib_ab.json")) if os.path.exists("calib_ab.json") else None
-    z, _ = to_metric(d, rim, tof_mm(), (fb["a"], fb["b"]) if fb else None)
+    if empty_z.shape != d.shape:                                 # camera resolution changed
+        empty_z = cv2.resize(empty_z, (d.shape[1], d.shape[0]), interpolation=cv2.INTER_LINEAR)
+    fb = load_fallback()
+    z, ab = to_metric(d, rim, tof_distance_mm, fb)
 
     fill_h = np.clip(empty_z - z, 0, CFG["bin_depth_mm"])[binm]
-    fill_pct = 100 * np.median(fill_h) / CFG["bin_depth_mm"]   # typical level
-    peak_pct = 100 * np.percentile(fill_h, 90) / CFG["bin_depth_mm"]  # heaps
+    raw_pct = 100 * float(np.median(fill_h)) / CFG["bin_depth_mm"]   # typical level
+    peak_pct = 100 * float(np.percentile(fill_h, 90)) / CFG["bin_depth_mm"]  # heaps
+    fill_pct, emptied = tracker.update(round(raw_pct, 1))
+    return {
+        "ts": time.time(),
+        "fill_pct": fill_pct,                    # smoothed (median of last 3)
+        "raw_fill_pct": round(raw_pct, 1),
+        "peak_pct": round(peak_pct, 1),
+        "emptied": emptied,
+        "surface_mm": round(float(np.median(z[binm]))),  # camera -> waste surface
+        "rim_mm": round(float(np.median(z[rim]))),       # sanity check vs rim_dist_mm
+        "tof_mm": tof_distance_mm,
+        "tof_used": fb is None or ab[1] != fb[1],        # False = rim-only fallback fit
+        "inference_ms": round(infer_ms),
+    }
 
-    history.append(fill_pct)
-    smooth = float(np.median(history[-3:]))                     # temporal filter
-    return round(smooth, 1), round(float(peak_pct), 1)
+# ---------------------------------------------------------------- modes
+def snapshot(img=None):
+    cv2.imwrite(CFG["calib_frame"], capture() if img is None else img)
+    print(f"Saved {CFG['calib_frame']} – paint bin_mask.png and rim_mask.png on it (white = area).")
+
+def calibrate(img=None, tof_distance_mm=None):
+    img = capture() if img is None else img
+    if tof_distance_mm is None:
+        tof_distance_mm = tof_mm()
+    d = infer(img)
+    rim = load_mask(CFG["rim_mask"], d.shape)
+    z, ab = to_metric(d, rim, tof_distance_mm)
+    np.save(CFG["empty_depth"], z)
+    json.dump({"a": ab[0], "b": ab[1]}, open(CFG["calib_ab"], "w"))
+    binm = load_mask(CFG["bin_mask"], d.shape)
+    floor = float(np.median(z[binm]))
+    print(f"Empty-bin floor depth (median): {floor:.0f} mm "
+          f"– expected about {CFG['rim_dist_mm'] + CFG['bin_depth_mm']} mm")
+    return floor
 
 def run():
-    history, last = [], None
+    tracker = FillTracker()
     new = not os.path.exists(CFG["log"])
     with open(CFG["log"], "a", newline="") as f:
         w = csv.writer(f)
@@ -155,15 +228,11 @@ def run():
             w.writerow(["timestamp", "fill_pct", "peak_pct", "event"])
         while True:
             try:
-                fill, peak = measure_once(history)
-                event = ""
-                if last is not None and last - fill > CFG["emptied_drop_pct"]:
-                    event = "emptied"
-                    history = [fill]
-                w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), fill, peak, event])
+                r = analyze(capture(), tracker)
+                event = "emptied" if r["emptied"] else ""
+                w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), r["fill_pct"], r["peak_pct"], event])
                 f.flush()
-                print(f"fill {fill}%  peak {peak}%  {event}")
-                last = fill
+                print(f"fill {r['fill_pct']}%  peak {r['peak_pct']}%  {event}")
             except Exception as e:
                 print("[error]", e)
             time.sleep(CFG["interval_s"])

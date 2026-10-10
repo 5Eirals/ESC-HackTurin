@@ -1,47 +1,26 @@
-from arduino.app_utils import *
-import os, sys
-import base64
-import http.client
-import ssl
-import time
-
 """ESC-HackTurin: app Linux della UNO Q.
 
 - Gas: riceve dal microcontrollore le letture di AHT20 + SGP30, decide (allarme gas relativo al
   valore a riposo), registra gli eventi per il "centro di controllo" simulato dell'azienda
   rifiuti e alimenta la dashboard web (brick WebUI, porta 7000).
-- Visione: avvia depth_fill.py (livello di riempimento con camera + ToF) nella modalita' scelta.
+- Visione: nel loop scatta una foto con il telefono (IP camera) e con il flash dell'anello LED,
+  legge il ToF e stima la profondita' con Depth Anything V2 (depth_fill.py) per ricavare il
+  livello di riempimento.
 """
 
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
+import base64
+import http.client
+import os
+import ssl
+import sys
 import threading
 import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-MODES = {"snapshot": depth_fill.snapshot,
-         "calibrate": depth_fill.calibrate,
-         "run": depth_fill.run,
-         "predict": depth_fill.predict}
-
-def pick_mode():
-    if len(sys.argv) > 1:                       # python main.py calibrate
-        return sys.argv[1]
-    if os.environ.get("MODE"):                  # MODE=calibrate python main.py
-        return os.environ["MODE"]
-    if os.path.exists("mode.txt"):              # mode.txt containing "calibrate"
-        return open("mode.txt").read().strip()
-    return "run"                                # normal operation
-
-mode = pick_mode().lower()
-if mode not in MODES:
-    sys.exit(f"Unknown mode '{mode}'. Use one of: {', '.join(MODES)}")
-print(f"Starting in mode: {mode}")
-MODES[mode]()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.chdir(os.path.dirname(os.path.abspath(__file__)))  # modello, maschere e calibrazione stanno qui
 
 from arduino.app_bricks.web_ui import WebUI
 from arduino.app_utils import App, Bridge
@@ -49,33 +28,48 @@ from arduino.app_utils import App, Bridge
 from baseline_store import BaselineStore
 from gas_alarm import GasAlarm
 
+try:
+    import depth_fill
+except Exception as exc:  # es. onnxruntime/opencv non installati
+    print(f"[warn] depth_fill non disponibile ({exc}): niente analisi di profondita', "
+          "le foto vengono solo salvate e i sensori gas restano attivi")
+    depth_fill = None
+
 # --- Configurazione -------------------------------------------------------------------
 BIN_ID = "TO-0001"
 BIN_ADDRESS = "Via Vincenzo Vela 17, Torino"
 
-# App Lab starts main.py without arguments, so choose the vision mode here:
-#   "snapshot"  -> save calib_frame.jpg to draw the masks on
-#   "calibrate" -> with the bin EMPTY, build the empty-bin depth map
-#   "run"       -> normal operation: measure every 15 minutes and log
-#   "predict"   -> estimate time until the bin is full
-#   None        -> vision disabled (gas sensors only)
-VISION_MODE = "snapshot"
+# App Lab avvia main.py senza argomenti: la modalita' della visione si sceglie qui
+# (oppure con la variabile d'ambiente MODE o con un file mode.txt accanto a main.py):
+#   "snapshot"  -> salva calib_frame.jpg su cui disegnare bin_mask.png e rim_mask.png
+#   "calibrate" -> con il cassonetto VUOTO crea la mappa di profondita' di riferimento,
+#                  poi passa da sola a "run"
+#   "run"       -> funzionamento normale: foto + analisi di profondita' ogni CAPTURE_INTERVAL_S
+#   None        -> visione disattivata (solo sensori gas)
+VISION_MODE = "run"
+VISION_MODES = ("snapshot", "calibrate", "run")
 
+CAPTURE_INTERVAL_S = 300     # una foto + analisi ogni 5 minuti
+FLASH_LEVEL = 255            # luminosita' dell'anello LED durante lo scatto
+FLASH_SETTLE_S = 1.0         # attesa perche' l'esposizione del telefono si adatti al flash
 
-{"snapshot": depth_fill.snapshot,
- "calibrate": depth_fill.calibrate,
- "run": depth_fill.run,
- "predict": depth_fill.predict}[MODE]()
-
-
+# Telefono usato come camera (app IP Webcam)
 PHONE_IP = "192.168.23.177"
 PORT = 4444
 USE_HTTPS = True
 USER, PASSWORD = "", ""     # solo se hai impostato login/password nell'app
-INTERVAL = 5                # secondi tra un fotogramma e l'altro
 
 SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_frame.jpg")
 
+HISTORY_SIZE = 600            # campioni tenuti per i grafici (1/s -> 10 minuti)
+MAX_EVENTS = 100              # eventi tenuti nel centro di controllo
+SGP30_WARMUP_S = 15           # dopo l'avvio l'SGP30 restituisce valori fissi per ~15 s
+BASELINE_MIN_RUNTIME_S = 600  # salva la baseline solo dopo 10 min di funzionamento continuo
+SENSOR_FAULT_AFTER = 3        # letture fallite consecutive prima di segnalare un guasto
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+# --- Camera (telefono) -------------------------------------------------------------------
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux aarch64)",
     "Accept": "image/jpeg,image/*,*/*",
@@ -103,7 +97,7 @@ def request(path):
     return conn, r
 
 
-def snapshot():
+def phone_snapshot():
     conn, r = request("/video/snapshot?camera=back")
     try:
         return r.read()
@@ -130,7 +124,7 @@ def frame_from_stream():
         conn.close()
 
 
-METHODS = [("/video/snapshot", snapshot), ("/video/mjpeg", frame_from_stream)]
+METHODS = [("/video/snapshot", phone_snapshot), ("/video/mjpeg", frame_from_stream)]
 preferred = 0   # il metodo che ha funzionato l'ultima volta viene provato per primo
 
 
@@ -173,13 +167,6 @@ def save(data):
     except OSError as e:
         print("  (fotogramma non salvato:", e, ")")
 
-HISTORY_SIZE = 600            # campioni tenuti per i grafici (1/s -> 10 minuti)
-MAX_EVENTS = 100              # eventi tenuti nel centro di controllo
-SGP30_WARMUP_S = 15           # dopo l'avvio l'SGP30 restituisce valori fissi per ~15 s
-BASELINE_MIN_RUNTIME_S = 600  # salva la baseline solo dopo 10 min di funzionamento continuo
-SENSOR_FAULT_AFTER = 3        # letture fallite consecutive prima di segnalare un guasto
-
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # --- Stato ------------------------------------------------------------------------------
 ui = WebUI()
@@ -330,27 +317,113 @@ def on_connect(sid):
 ui.on_connect(on_connect)
 
 
-# --- Visione (depth_fill.py) ----------------------------------------------------------------
-def start_vision():
-    """Avvia la modalita' scelta in un thread separato, cosi' i sensori gas continuano a girare."""
-    if VISION_MODE is None:
+# --- Visione: foto + analisi di profondita' -------------------------------------------------
+def pick_vision_mode():
+    mode = os.environ.get("MODE")                       # MODE=calibrate python main.py
+    if not mode and os.path.exists("mode.txt"):         # mode.txt con dentro "calibrate"
+        mode = open("mode.txt").read().strip()
+    mode = (mode or VISION_MODE or "").lower() or None
+    if mode is not None and mode not in VISION_MODES:
+        print(f"[warn] modalita' visione '{mode}' sconosciuta (usa {', '.join(VISION_MODES)}): uso 'run'")
+        mode = "run"
+    return mode
+
+
+vision_mode = pick_vision_mode()
+fill_tracker = depth_fill.FillTracker() if depth_fill else None
+last_capture_t = None   # time.monotonic() dell'ultimo scatto
+last_fill = None        # ultimo risultato di depth_fill.analyze() (salvato nel prossimo task)
+
+
+def mcu_call(name, *args, timeout=5):
+    """Chiamata allo sketch che non fa cadere il loop se il Bridge non risponde."""
+    try:
+        return Bridge.call(name, *args, timeout=timeout)
+    except Exception as exc:
+        print(f"[{now_str()}] Bridge.call({name}) fallita: {exc}")
+        return None
+
+
+def take_photo():
+    """Scatta con il flash dell'anello LED acceso e legge il ToF nello stesso momento.
+    Ritorna (jpeg, tof_mm) oppure (None, tof_mm) se la camera non risponde."""
+    mcu_call("set_flash", FLASH_LEVEL)
+    time.sleep(FLASH_SETTLE_S)
+    try:
+        method, data, ms = grab()
+        if data[:2] != b"\xff\xd8":
+            raise ValueError("la risposta non è un JPEG")
+    except Exception as e:
+        print(f"[{now_str()}] Camera: ERRORE {e}")
+        data = None
+    finally:
+        mcu_call("set_flash", 0)
+    tof = mcu_call("read_tof")
+    tof = int(tof) if tof is not None else -1
+    mcu_call("camera_status", data is not None)
+    if data is not None:
+        size = jpeg_size(data)
+        res = f"{size[0]}x{size[1]}" if size else "?x?"
+        print(f"[{now_str()}] Camera OK [{method}] {res} {len(data) // 1024} kB {ms:.0f} ms, ToF {tof} mm")
+        save(data)
+    return data, tof
+
+
+def vision_step():
+    """Una foto e, a seconda della modalita', snapshot / calibrazione / misura del riempimento."""
+    global vision_mode, last_fill
+    data, tof = take_photo()
+    if data is None or depth_fill is None:
         return
     try:
-        import depth_fill
-    except Exception as exc:  # es. onnxruntime/opencv non installati
-        print(f"[warn] depth_fill non disponibile ({exc}): visione disattivata, i sensori gas restano attivi")
+        img = depth_fill.decode_jpeg(data)
+    except Exception as exc:
+        print(f"[{now_str()}] Foto non decodificabile: {exc}")
         return
-    mode = {"snapshot": depth_fill.snapshot,
-            "calibrate": depth_fill.calibrate,
-            "run": depth_fill.run,
-            "predict": depth_fill.predict}[VISION_MODE]
-    threading.Thread(target=mode, name=f"vision-{VISION_MODE}", daemon=True).start()
+
+    if vision_mode == "snapshot":
+        depth_fill.snapshot(img)
+        return
+
+    masks = [depth_fill.CFG["bin_mask"], depth_fill.CFG["rim_mask"]]
+    if any(not os.path.exists(m) for m in masks):
+        # Senza maschere non si puo' misurare: salviamo il fotogramma su cui disegnarle.
+        depth_fill.snapshot(img)
+        print(f"[{now_str()}] Visione: mancano {', '.join(m for m in masks if not os.path.exists(m))}")
+        return
+
+    if vision_mode == "calibrate":
+        try:
+            floor = depth_fill.calibrate(img, tof)
+        except Exception as exc:
+            print(f"[{now_str()}] Calibrazione fallita: {exc} (riprovo al prossimo scatto)")
+            return
+        print(f"[{now_str()}] Calibrazione a vuoto completata (fondo a {floor:.0f} mm): passo a 'run'")
+        vision_mode = "run"
+        return
+
+    missing = depth_fill.missing_calibration()
+    if missing:
+        print(f"[{now_str()}] Visione: manca {', '.join(missing)}. "
+              "Con il cassonetto vuoto imposta VISION_MODE = \"calibrate\"")
+        return
+    try:
+        result = depth_fill.analyze(img, fill_tracker, tof)
+    except Exception as exc:
+        print(f"[{now_str()}] Analisi di profondita' fallita: {exc}")
+        return
+    last_fill = result
+    print(f"[{now_str()}] Riempimento {result['fill_pct']}% (grezzo {result['raw_fill_pct']}%, "
+          f"picchi {result['peak_pct']}%), superficie a {result['surface_mm']} mm, "
+          f"bordo a {result['rim_mm']} mm, ToF {'usato' if result['tof_used'] else 'non valido'}, "
+          f"inferenza {result['inference_ms']} ms"
+          f"{' - CASSONETTO SVUOTATO' if result['emptied'] else ''}")
 
 
 # --- Loop principale ------------------------------------------------------------------------
 def loop():
     """Le chiamate verso lo sketch si fanno qui, mai dentro le callback del Bridge."""
-    global need_restore, baseline_restored
+    global need_restore, baseline_restored, last_capture_t
     if need_restore:
         need_restore = False
         stored = baseline_store.load()
@@ -364,28 +437,16 @@ def loop():
                 print(f"[{now_str()}] Ripristino baseline fallito: {exc}")
                 ok = False
             baseline_restored = bool(ok)
+
+    if vision_mode is not None and (last_capture_t is None
+                                    or time.monotonic() - last_capture_t >= CAPTURE_INTERVAL_S):
+        last_capture_t = time.monotonic()
+        vision_step()
+
     time.sleep(1)
 
-    # camera
-    ok = False
-    try:
-        method, data, ms = grab()
-        if data[:2] != b"\xff\xd8":
-            raise ValueError("la risposta non è un JPEG")
-        size = jpeg_size(data)
-        res = f"{size[0]}x{size[1]}" if size else "?x?"
-        print(f"OK [{method}]  {res}  {len(data) // 1024} kB  {ms:.0f} ms")
-        ok = True
-        save(data)
-    except Exception as e:
-        print("ERRORE:", e)
-    try:
-        Bridge.call("camera_status", ok)
-    except Exception as e:
-        print("Bridge non pronto:", e)
-    time.sleep(INTERVAL)
 
-start_vision()
 scheme = "https" if USE_HTTPS else "http"
-print(f"Test camera su {scheme}://{PHONE_IP}:{PORT}")
+print(f"Visione: modalita' {vision_mode}, camera {scheme}://{PHONE_IP}:{PORT}, "
+      f"uno scatto ogni {CAPTURE_INTERVAL_S} s")
 App.run(user_loop=loop)
