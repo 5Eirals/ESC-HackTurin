@@ -61,6 +61,7 @@ VISION_MODES = ("snapshot", "calibrate", "run")
 
 CAPTURE_INTERVAL_S = 300     # una foto + analisi ogni 5 minuti
 FLASH_SETTLE_S = 1.5         # attesa perche' l'esposizione del telefono si adatti alla torcia
+SNAPSHOT_TIMEOUT_S = 20      # attesa massima per uno scatto (l'app arriva a 14 s)
 
 # Telefono usato come camera (app IP Webcam)
 PHONE_IP = "192.168.23.177"
@@ -108,11 +109,11 @@ SSL_CTX.check_hostname = False
 SSL_CTX.verify_mode = ssl.CERT_NONE
 
 
-def request(path):
+def request(path, timeout=5):
     if USE_HTTPS:
-        conn = http.client.HTTPSConnection(PHONE_IP, PORT, timeout=5, context=SSL_CTX)
+        conn = http.client.HTTPSConnection(PHONE_IP, PORT, timeout=timeout, context=SSL_CTX)
     else:
-        conn = http.client.HTTPConnection(PHONE_IP, PORT, timeout=5)
+        conn = http.client.HTTPConnection(PHONE_IP, PORT, timeout=timeout)
     conn.request("GET", path, headers=HEADERS)
     r = conn.getresponse()
     if r.status != 200:
@@ -122,7 +123,8 @@ def request(path):
 
 
 def phone_snapshot():
-    conn, r = request("/video/snapshot?camera=back")
+    # L'app puo' metterci fino a 14 s (riapre la camera, riprova): 5 s non bastano
+    conn, r = request("/video/snapshot?camera=back", timeout=SNAPSHOT_TIMEOUT_S)
     try:
         return r.read()
     finally:
@@ -526,22 +528,30 @@ def mcu_call(name, *args, timeout=5):
         return None
 
 
-def phone_torch(on):
-    """Accende o spegne la torcia del telefono. L'app IP camera applica i comandi solo come
-    parametri sulla pagina principale (/?torch=on): su /control/... li ignora e risponde 200."""
+def phone_command(key, value):
+    """Comando all'app IP camera (v0.12): parametri sulla pagina principale, es. /?torch=on.
+    Su /control/... l'app ignora i parametri e risponde comunque 200."""
     try:
-        conn, r = request(f"/?torch={'on' if on else 'off'}")
+        conn, r = request(f"/?{key}={value}")
         r.read()
         conn.close()
         return True
     except Exception as e:
-        print(f"[{now_str()}] Torcia del telefono: ERRORE {e}")
+        print(f"[{now_str()}] Telefono, comando {key}={value}: ERRORE {e}")
         return False
+
+
+def phone_torch(on):
+    """Accende o spegne la torcia del telefono."""
+    return phone_command("torch", "on" if on else "off")
 
 
 def take_photo():
     """Scatta con la torcia del telefono accesa e legge il ToF nello stesso momento.
     Ritorna (jpeg, tof_mm) oppure (None, tof_mm) se la camera non risponde."""
+    # Foto alla risoluzione dello stream: al massimo (12 MP) lo scatto e' lento e il modello
+    # la riduce comunque a 640 px
+    phone_command("snapshot_res", "stream")
     phone_torch(True)
     time.sleep(FLASH_SETTLE_S)
     try:
