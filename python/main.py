@@ -56,18 +56,18 @@ BIN_ADDRESS = "Via Vincenzo Vela 17, Torino"
 #                  (controllare python/calib_overlay.jpg), poi passa da sola a "run"
 #   "run"       -> funzionamento normale: foto + analisi di profondita' ogni CAPTURE_INTERVAL_S
 #   "off"/None  -> visione disattivata (solo sensori gas)
-VISION_MODE = "run"
+VISION_MODE = "calibrate"   # dopo una calibrazione riuscita rimettere "run"
 VISION_MODES = ("snapshot", "calibrate", "run")
 
-CAPTURE_INTERVAL_S = 300     # una foto + analisi ogni 5 minuti
+CAPTURE_INTERVAL_S = 20      # prove: uno scatto ogni 20 s (in uso normale 300 = 5 minuti)
 FLASH_SETTLE_S = 1.5         # attesa perche' l'esposizione del telefono si adatti alla torcia
 SNAPSHOT_TIMEOUT_S = 20      # attesa massima per uno scatto (l'app arriva a 14 s)
 
 # Telefono usato come camera (app IP Webcam)
-PHONE_IP = "192.168.23.177"
+PHONE_IP = "192.168.22.74"
 PORT = 4444
 USE_HTTPS = True
-USER, PASSWORD = "", ""     # solo se hai impostato login/password nell'app
+USER, PASSWORD = "ESCam67", "ESCamotage23"   # login dell'app IP camera
 
 SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_frame.jpg")
 
