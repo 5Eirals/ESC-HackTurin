@@ -1,7 +1,12 @@
 /** Supabase settings: the kit's NEXT_PUBLIC_* names work too, so one Vercel environment serves both. */
 export function supabaseEnv(): { url: string; key: string } {
   const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  // Also the names set by the Supabase integration of the Vercel Marketplace (legacy anon key).
+  const key =
+    process.env.SUPABASE_PUBLISHABLE_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+    process.env.SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!url || !key) {
     throw new Error('Missing SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY: set them in the Vercel project settings.')
   }
