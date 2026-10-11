@@ -6,3 +6,6 @@ __pycache__/
 
 # Foto scattate a runtime
 python/last_frame.jpg
+
+# Contesto locale per Claude Code
+CLAUDE.md
