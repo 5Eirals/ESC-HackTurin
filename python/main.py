@@ -49,9 +49,11 @@ BIN_ADDRESS = "Via Vincenzo Vela 17, Torino"
 
 # App Lab avvia main.py senza argomenti: la modalita' della visione si sceglie qui
 # (oppure con un argomento, la variabile d'ambiente MODE o un file mode.txt accanto a main.py):
-#   "snapshot"  -> salva calib_frame.jpg su cui disegnare bin_mask.png e rim_mask.png
-#   "calibrate" -> con il cassonetto VUOTO crea la mappa di profondita' di riferimento,
-#                  poi passa da sola a "run"
+#   "snapshot"  -> salva calib_frame.jpg (serve solo per disegnare le maschere a mano, con
+#                  depth_fill.CFG["auto_calibration"] = False)
+#   "calibrate" -> con il cassonetto VUOTO: l'AI trova il fondo e la fascia di riferimento, il
+#                  ToF da' la distanza dal fondo; crea maschere, distanze e mappa di riferimento
+#                  (controllare python/calib_overlay.jpg), poi passa da sola a "run"
 #   "run"       -> funzionamento normale: foto + analisi di profondita' ogni CAPTURE_INTERVAL_S
 #   "off"/None  -> visione disattivata (solo sensori gas)
 VISION_MODE = "run"
@@ -566,11 +568,16 @@ def vision_step():
         depth_fill.snapshot(img)
         return
 
+    auto = depth_fill.CFG["auto_calibration"]
     masks = [depth_fill.CFG["bin_mask"], depth_fill.CFG["rim_mask"]]
-    if any(not os.path.exists(m) for m in masks):
-        # Senza maschere non si puo' misurare: salviamo il fotogramma su cui disegnarle.
+    missing_masks = [m for m in masks if not os.path.exists(m)]
+    if missing_masks and not (auto and vision_mode == "calibrate"):
+        # Senza maschere non si puo' misurare: con l'autocalibrazione le crea "calibrate",
+        # altrimenti salviamo il fotogramma su cui disegnarle.
         depth_fill.snapshot(img)
-        print(f"[{now_str()}] Visione: mancano {', '.join(m for m in masks if not os.path.exists(m))}")
+        print(f"[{now_str()}] Visione: mancano {', '.join(missing_masks)}. "
+              + ("Con il cassonetto vuoto imposta VISION_MODE = \"calibrate\"" if auto
+                 else "Disegnale su calib_frame.jpg"))
         return
 
     if vision_mode == "calibrate":
@@ -579,7 +586,9 @@ def vision_step():
         except Exception as exc:
             print(f"[{now_str()}] Calibrazione fallita: {exc} (riprovo al prossimo scatto)")
             return
-        print(f"[{now_str()}] Calibrazione a vuoto completata (fondo a {floor:.0f} mm): passo a 'run'")
+        print(f"[{now_str()}] Calibrazione a vuoto completata (fondo a {floor:.0f} mm, riferimento a "
+              f"{depth_fill.CFG['rim_dist_mm']:.0f} mm, pieno a {depth_fill.CFG['bin_depth_mm']:.0f} mm "
+              "dal fondo): passo a 'run'")
         vision_mode = "run"
         return
 
@@ -602,7 +611,7 @@ def vision_step():
         cloud.add_fill(result["ts"], result["fill_pct"], result["peak_pct"], result["emptied"])
     print(f"[{now_str()}] Riempimento {result['fill_pct']}% (grezzo {result['raw_fill_pct']}%, "
           f"picchi {result['peak_pct']}%), superficie a {result['surface_mm']} mm, "
-          f"bordo a {result['rim_mm']} mm, ToF {'usato' if result['tof_used'] else 'non valido'}, "
+          f"riferimento a {result['rim_mm']} mm, ToF {'usato' if result['tof_used'] else 'non valido'}, "
           f"inferenza {result['inference_ms']} ms"
           f"{' - CASSONETTO SVUOTATO' if result['emptied'] else ''}"
           f"{'' if saved else ' (NON salvato su file)'}")

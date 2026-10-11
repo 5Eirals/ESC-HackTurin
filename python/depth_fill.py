@@ -5,8 +5,8 @@ Runs on the Linux side of the Arduino UNO Q.
   pip install onnxruntime opencv-python-headless numpy
 
 Usage (standalone, USB camera):
-  python depth_fill.py snapshot    # save calib_frame.jpg to draw the masks on
-  python depth_fill.py calibrate   # with the bin EMPTY: builds empty_depth.npy
+  python depth_fill.py snapshot    # save calib_frame.jpg (only needed to draw masks by hand)
+  python depth_fill.py calibrate   # with the bin EMPTY: masks, distances and empty_depth.npy
   python depth_fill.py run         # periodic measurement + logging + time-to-full prediction
 
 From main.py (phone camera): the frame is passed in as `img`, e.g.
@@ -16,10 +16,15 @@ How it works:
   The model outputs RELATIVE inverse depth (bigger = closer), with an unknown
   scale and shift that change from image to image. Every frame we re-fit them
   with two anchors of known distance:
-    1. the bin rim  -> always visible, fixed distance from the camera
-    2. the ToF spot -> Modulino Distance gives the true distance at one pixel
+    1. the reference band -> along the image edge, fixed distance from the camera
+       (the bin rim when it is in view)
+    2. the ToF spot       -> Modulino Distance gives the true distance at one pixel
   Then:  1/Z = a * d + b   ->  metric depth Z for every pixel.
   Fill height = (empty-bin depth) - (current depth), inside the bin mask.
+
+  Calibration (bin EMPTY) is automatic: the AI depth map gives the floor (bin_mask.png),
+  the reference band (rim_mask.png) and, with the ToF distance to the floor, the band's
+  distance from the camera. Nothing is measured or drawn by hand (see auto_calibrate()).
 """
 import json, os, sys, time
 import numpy as np
@@ -32,12 +37,17 @@ CFG = {
     "model": "depth_anything_v2_vits_252.onnx",
     "input_size": 252,
     "camera_index": 0,            # check with: v4l2-ctl --list-devices
-    "bin_mask": "bin_mask.png",   # white = bin interior seen by the camera
-    "rim_mask": "rim_mask.png",   # white = rim pixels (never covered by waste)
-    "rim_dist_mm": 150,           # measured once: camera -> rim
-    "tof_px": [320, 240],         # pixel where the ToF beam lands (find once)
+    "bin_mask": "bin_mask.png",   # white = bin floor seen by the camera
+    "rim_mask": "rim_mask.png",   # white = reference pixels (never covered by waste)
+    "rim_dist_mm": 150,           # camera -> reference band (auto-calibration overwrites it)
+    "tof_px": None,               # pixel where the ToF beam lands; None = image centre
     "tof_radius": 6,
-    "bin_depth_mm": 1100,         # rim -> floor, measured once
+    "bin_depth_mm": 1100,         # floor -> "full" level (auto-calibration overwrites it)
+    "auto_calibration": True,     # calibrate: the AI finds floor, band and distances by itself
+    "auto_band_px": 12,           # thickness of the reference band along the image edge
+    "auto_floor_grad": 0.2,       # floor = depth changes slower than this share of the walls
+    "full_dist_mm": None,         # camera -> "full" level; None = the reference band
+    "calib_overlay": "calib_overlay.jpg",  # what the AI found, to check by eye
     "empty_depth": "empty_depth.npy",
     "interval_s": 900,            # one measurement every 15 minutes
     "log": os.path.join("..", "data", "fill_log.csv"),  # shared with main.py / dashboard
@@ -115,8 +125,13 @@ def load_mask(path, shape):
 def anchor_value(d, mask):
     return float(np.median(d[mask]))
 
+def tof_spot(shape):
+    """Pixel where the ToF beam lands: CFG["tof_px"], or the image centre (sensor next to the lens)."""
+    h, w = shape[:2]
+    return CFG["tof_px"] if CFG["tof_px"] is not None else [w // 2, h // 2]
+
 def tof_value(d):
-    x, y = CFG["tof_px"]; r = CFG["tof_radius"]
+    x, y = tof_spot(d.shape); r = CFG["tof_radius"]
     h, w = d.shape[:2]
     x, y = min(max(x, r), w - r), min(max(y, r), h - r)       # stay inside the frame
     return float(np.median(d[y - r:y + r, x - r:x + r]))
@@ -126,17 +141,18 @@ def to_metric(d, rim_mask, tof_distance_mm, fallback=None):
     d_rim, z_rim = anchor_value(d, rim_mask), CFG["rim_dist_mm"]
     if tof_distance_mm > 0:
         d_tof, z_tof = tof_value(d), tof_distance_mm
-        if abs(d_tof - d_rim) > 1e-3 * (abs(d_rim) + 1):          # not degenerate
+        # Anchors too close to each other (bin almost full) would blow up the fit: use the fallback
+        if z_tof > 1.15 * z_rim and abs(d_tof - d_rim) > 1e-6:
             a = (1 / z_tof - 1 / z_rim) / (d_tof - d_rim)
             b = 1 / z_rim - a * d_rim
-            return 1.0 / np.clip(a * d + b, 1e-6, None), (a, b)
+            return 1.0 / np.clip(a * d + b, 1e-6, None), (a, b), True
     # Fallback: ToF missing or bin almost full (both anchors at the same depth):
     # keep the calibrated shift b, re-fit only the scale on the rim.
     if fallback is None:
         raise RuntimeError("No valid anchors and no fallback calibration")
     b = fallback[1]
     a = (1 / z_rim - b) / d_rim
-    return 1.0 / np.clip(a * d + b, 1e-6, None), (a, b)
+    return 1.0 / np.clip(a * d + b, 1e-6, None), (a, b), False
 
 # ---------------------------------------------------------------- calibration state
 def missing_calibration():
@@ -149,6 +165,149 @@ def load_fallback():
         return None
     ab = json.load(open(CFG["calib_ab"]))
     return ab["a"], ab["b"]
+
+def load_geometry():
+    """Distances found by the auto-calibration (saved in calib_ab.json) replace the CFG values."""
+    if os.path.exists(CFG["calib_ab"]):
+        saved = json.load(open(CFG["calib_ab"]))
+        for key in ("rim_dist_mm", "bin_depth_mm"):
+            if key in saved:
+                CFG[key] = saved[key]
+
+# ---------------------------------------------------------------- auto-calibration
+# With the bin EMPTY the AI depth map replaces the measurements by hand.
+# - Floor: the flat region around the image centre (one plane in the depth map).
+# - Walls: along a plane the model output d = a/Z + b is a straight line in the image. Two
+#   opposite walls are parallel, so their lines meet on their common vanishing line, where Z is
+#   infinite and therefore d = b: the meeting point gives the shift b, even if the camera is tilted.
+# - Scale: the ToF reads the floor distance Z_f, so a = (d_floor - b) * Z_f.
+# Then Z = a / (d - b) for every pixel, including the reference band along the image edge that
+# replaces the bin rim (the rim itself is usually out of view with the camera under the lid).
+
+def _floor_region(d):
+    """Floor of the empty bin: the region around the centre where depth changes slowly.
+    The walls, which fill the image edges, change fast; the floor is flat (or almost)."""
+    h, w = d.shape
+    ds = cv2.GaussianBlur(d.astype(np.float32), (0, 0), 3)
+    grad = np.hypot(cv2.Sobel(ds, cv2.CV_32F, 1, 0), cv2.Sobel(ds, cv2.CV_32F, 0, 1)) / 8
+    edges = np.ones(d.shape, bool)
+    edges[h // 10:h - h // 10, w // 10:w - w // 10] = False
+    slow = grad < CFG["auto_floor_grad"] * np.median(grad[edges])
+    if not slow[h // 2, w // 2]:
+        return np.zeros(d.shape, bool)
+    _, labels = cv2.connectedComponents(slow.astype(np.uint8))
+    return labels == labels[h // 2, w // 2]
+
+def _shift_from_walls(profile, lo, hi):
+    """Shift b where the lines of the two walls on a profile meet (None if not usable).
+    profile: d across the image; lo/hi: first and last floor index on it."""
+    n = len(profile)
+    lines = []
+    # Wall pixels only: away from the image edge and from the blurred crease with the floor
+    for start, stop in ((3, lo - max(10, lo // 4)), (hi + max(10, (n - hi) // 4), n - 3)):
+        t = np.arange(start, stop)
+        if len(t) < 20:
+            return None, None
+        s, c = np.polyfit(t, profile[t], 1)
+        r2 = 1 - np.var(profile[t] - (s * t + c)) / np.var(profile[t])
+        lines.append((s, c, r2))
+    (s1, c1, r1), (s2, c2, r2) = lines
+    fit = round(min(r1, r2), 4)
+    # Each wall must get closer towards the image edge and be a clean straight line
+    if s1 >= 0 or s2 <= 0 or fit < 0.98:
+        return None, fit
+    t0 = (c2 - c1) / (s1 - s2)
+    if not lo < t0 < hi:                       # the vanishing line must cross the floor
+        return None, fit
+    return float(s1 * t0 + c1), fit
+
+def _edge_bands(shape):
+    """Bands along the four image edges, without the corners where two walls meet."""
+    h, w = shape
+    t = CFG["auto_band_px"]
+    bands = {name: np.zeros(shape, bool) for name in ("top", "bottom", "left", "right")}
+    bands["top"][:t, w // 10:w - w // 10] = True
+    bands["bottom"][h - t:, w // 10:w - w // 10] = True
+    bands["left"][h // 10:h - h // 10, :t] = True
+    bands["right"][h // 10:h - h // 10, w - t:] = True
+    return bands
+
+def auto_calibrate(d, tof_distance_mm):
+    """Empty bin: floor, reference band and their distances from the AI depth map and the ToF.
+    Writes bin_mask.png and rim_mask.png, updates CFG and returns the figures to save."""
+    if tof_distance_mm <= 0:
+        raise RuntimeError("auto-calibration needs a valid ToF reading of the empty bin floor")
+    h, w = d.shape
+    floor = _floor_region(d)
+    if floor.mean() < 0.05:
+        raise RuntimeError("floor not found: is the bin empty and the camera looking at its centre?")
+    rows = np.nonzero(floor[:, w // 2])[0]
+    cols = np.nonzero(floor[h // 2, :])[0]
+
+    # Shift b from the two pairs of opposite walls (a few central columns / rows, against noise)
+    k = max(2, w // 32)
+    b_rows, fit_rows = _shift_from_walls(np.median(d[:, w // 2 - k:w // 2 + k], axis=1),
+                                         rows.min(), rows.max())
+    b_cols, fit_cols = _shift_from_walls(np.median(d[h // 2 - k:h // 2 + k, :], axis=0),
+                                         cols.min(), cols.max())
+    shifts = [b for b in (b_rows, b_cols) if b is not None]
+    if not shifts:
+        raise RuntimeError("walls not found on both sides of the floor: centre the camera over the bin")
+    b = float(np.mean(shifts))
+
+    # Scale a from the ToF distance to the floor
+    x, y = tof_spot(d.shape)
+    on_floor = 0 <= x < w and 0 <= y < h and floor[y, x]
+    d_floor = tof_value(d) if on_floor else float(np.median(d[floor]))
+    if not on_floor:
+        print(f"[warn] tof_px {x},{y} is not on the floor: using the floor median")
+    if d_floor <= b:
+        raise RuntimeError("inconsistent depth map: the floor comes out beyond the vanishing line")
+    a = (d_floor - b) * tof_distance_mm
+
+    # Reference band: the edge band closest to the camera (stays uncovered the longest)
+    bands = _edge_bands(d.shape)
+    edge = max(bands, key=lambda name: np.median(d[bands[name]]))
+    band = bands[edge]
+    d_band = float(np.median(d[band]))
+    band_mm = a / (d_band - b)
+    spread = [(d_floor - s) * tof_distance_mm / (d_band - s) for s in shifts]
+    if not 0 < band_mm < 0.9 * tof_distance_mm:
+        raise RuntimeError(f"reference band at {band_mm:.0f} mm: not plausible with the floor "
+                           f"at {tof_distance_mm} mm")
+
+    full_mm = CFG["full_dist_mm"] or band_mm
+    CFG["rim_dist_mm"] = round(band_mm, 1)
+    CFG["bin_depth_mm"] = round(tof_distance_mm - full_mm, 1)
+
+    bin_mask = cv2.erode(floor.astype(np.uint8) * 255, np.ones((9, 9), np.uint8))
+    cv2.imwrite(CFG["bin_mask"], bin_mask)
+    cv2.imwrite(CFG["rim_mask"], band.astype(np.uint8) * 255)
+
+    ys, xs = np.nonzero(floor)
+    info = {
+        "edge": edge,
+        "band_mm": round(band_mm, 1),
+        "band_mm_range": [round(min(spread), 1), round(max(spread), 1)],
+        "floor_mm": int(tof_distance_mm),
+        "floor_px": [int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())],
+        "shift_rows": b_rows, "shift_cols": b_cols,
+        "wall_fit_rows": fit_rows, "wall_fit_cols": fit_cols,
+    }
+    if max(spread) - min(spread) > 0.2 * band_mm:
+        print("[warn] the two pairs of walls disagree: the camera is tilted or off-centre "
+              f"(band between {min(spread):.0f} and {max(spread):.0f} mm); straighten it and recalibrate")
+    return info, bin_mask > 127, band
+
+def save_overlay(img, d, floor, band):
+    """Photo with the floor (green), the reference band (red) and the ToF spot, next to the depth map."""
+    over = img.copy()
+    over[floor] = (0.55 * over[floor] + 0.45 * np.array([60, 190, 60])).astype(np.uint8)
+    over[band] = (0.35 * over[band] + 0.65 * np.array([40, 40, 230])).astype(np.uint8)
+    cv2.circle(over, tuple(int(v) for v in tof_spot(d.shape)), 6, (255, 255, 255), 2)
+    depth = cv2.applyColorMap(cv2.normalize(d, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8),
+                              cv2.COLORMAP_INFERNO)
+    cv2.imwrite(CFG["calib_overlay"], np.hstack([over, depth]))
 
 # ---------------------------------------------------------------- analysis
 class FillTracker:
@@ -173,6 +332,7 @@ def analyze(img, tracker, tof_distance_mm=None):
     Returns a dict with fill/peak percentage, depth figures and diagnostics."""
     if tof_distance_mm is None:
         tof_distance_mm = tof_mm()
+    load_geometry()
     t0 = time.time()
     d = infer(img)
     infer_ms = (time.time() - t0) * 1000
@@ -182,7 +342,7 @@ def analyze(img, tracker, tof_distance_mm=None):
     if empty_z.shape != d.shape:                                 # camera resolution changed
         empty_z = cv2.resize(empty_z, (d.shape[1], d.shape[0]), interpolation=cv2.INTER_LINEAR)
     fb = load_fallback()
-    z, ab = to_metric(d, rim, tof_distance_mm, fb)
+    z, ab, tof_used = to_metric(d, rim, tof_distance_mm, fb)
 
     fill_h = np.clip(empty_z - z, 0, CFG["bin_depth_mm"])[binm]
     raw_pct = 100 * float(np.median(fill_h)) / CFG["bin_depth_mm"]   # typical level
@@ -197,28 +357,41 @@ def analyze(img, tracker, tof_distance_mm=None):
         "surface_mm": round(float(np.median(z[binm]))),  # camera -> waste surface
         "rim_mm": round(float(np.median(z[rim]))),       # sanity check vs rim_dist_mm
         "tof_mm": int(tof_distance_mm),
-        "tof_used": bool(fb is None or ab[1] != fb[1]),  # False = rim-only fallback fit
+        "tof_used": tof_used,                     # False = rim-only fallback fit
         "inference_ms": round(infer_ms),
     }
 
 # ---------------------------------------------------------------- modes
 def snapshot(img=None):
     cv2.imwrite(CFG["calib_frame"], capture() if img is None else img)
-    print(f"Saved {CFG['calib_frame']} – paint bin_mask.png and rim_mask.png on it (white = area).")
+    if CFG["auto_calibration"]:
+        print(f"Saved {CFG['calib_frame']} – masks are not needed: calibrate (bin EMPTY) finds them.")
+    else:
+        print(f"Saved {CFG['calib_frame']} – paint bin_mask.png and rim_mask.png on it (white = area).")
 
 def calibrate(img=None, tof_distance_mm=None):
     img = capture() if img is None else img
     if tof_distance_mm is None:
         tof_distance_mm = tof_mm()
     d = infer(img)
+    calib = {}
+    if CFG["auto_calibration"]:
+        info, floor_mask, band = auto_calibrate(d, tof_distance_mm)
+        cv2.imwrite(CFG["calib_frame"], img)
+        save_overlay(img, d, floor_mask, band)
+        calib = {"rim_dist_mm": CFG["rim_dist_mm"], "bin_depth_mm": CFG["bin_depth_mm"], "auto": info}
+        print(f"Auto-calibration: floor at {tof_distance_mm} mm (ToF), reference band on the "
+              f"{info['edge']} edge at {info['band_mm']:.0f} mm "
+              f"(estimates {info['band_mm_range'][0]:.0f}-{info['band_mm_range'][1]:.0f} mm), "
+              f"full = {CFG['bin_depth_mm']:.0f} mm above the floor; check {CFG['calib_overlay']}")
     rim = load_mask(CFG["rim_mask"], d.shape)
-    z, ab = to_metric(d, rim, tof_distance_mm)
+    z, ab, _ = to_metric(d, rim, tof_distance_mm)
     np.save(CFG["empty_depth"], z)
-    json.dump({"a": ab[0], "b": ab[1]}, open(CFG["calib_ab"], "w"))
+    json.dump({"a": ab[0], "b": ab[1], **calib}, open(CFG["calib_ab"], "w"), indent=2)
     binm = load_mask(CFG["bin_mask"], d.shape)
     floor = float(np.median(z[binm]))
-    print(f"Empty-bin floor depth (median): {floor:.0f} mm "
-          f"– expected about {CFG['rim_dist_mm'] + CFG['bin_depth_mm']} mm")
+    expected = tof_distance_mm if CFG["auto_calibration"] else CFG["rim_dist_mm"] + CFG["bin_depth_mm"]
+    print(f"Empty-bin floor depth (median): {floor:.0f} mm – expected about {expected:.0f} mm")
     return floor
 
 def describe_prediction(p):

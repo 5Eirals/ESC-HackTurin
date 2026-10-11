@@ -146,10 +146,10 @@ Ogni 5 minuti `main.py`:
 2. **legge il ToF** nello stesso momento;
 3. ridimensiona la foto a 640 px di larghezza e la passa a **Depth Anything V2** (ONNX Runtime, CPU), che restituisce una mappa di **profondità relativa**: sa cosa è più vicino e cosa più lontano, ma non in millimetri;
 4. la converte in **millimetri** con due ancore di distanza nota, ricalcolate a ogni foto con la relazione `1/Z = a·d + b`:
-   - il **bordo del cassonetto** (`rim_mask.png`), sempre visibile e a distanza fissa dalla camera (`rim_dist_mm`);
-   - il **punto del ToF** (`tof_px`), dove il Modulino Distance misura la distanza vera.
+   - la **fascia di riferimento** (`rim_mask.png`): una striscia di parete lungo il margine della foto, a distanza fissa dalla camera (`rim_dist_mm`) e coperta dai rifiuti solo a cassonetto pieno. Con la camera sotto il coperchio il bordo del cassonetto di solito resta fuori dall'inquadratura;
+   - il **punto del ToF** (`tof_px`, di default il centro della foto), dove il Modulino Distance misura la distanza vera.
 
-   Se il ToF non è valido, o il cassonetto è così pieno che le due ancore sono alla stessa distanza, riusa lo spostamento `b` della calibrazione e ricalcola solo la scala sul bordo;
+   Se il ToF non è valido, o il cassonetto è così pieno che le due ancore sono troppo vicine, riusa lo spostamento `b` della calibrazione e ricalcola solo la scala sulla fascia;
 5. confronta la profondità attuale con quella del **cassonetto vuoto** (`empty_depth.npy`) dentro `bin_mask.png`: l'altezza dei rifiuti è `profondità a vuoto − profondità attuale`, da cui:
    - **riempimento** = mediana delle altezze / profondità del cassonetto (livello tipico);
    - **picchi** = 90° percentile (cumuli di sacchi);
@@ -160,12 +160,23 @@ La modalità della visione si sceglie con `VISION_MODE` in `main.py`, oppure con
 
 | Modalità | Cosa fa |
 | :--- | :--- |
-| `snapshot` | salva `calib_frame.jpg`, su cui disegnare le maschere |
-| `calibrate` | con il cassonetto **vuoto** crea la mappa di riferimento, poi passa da sola a `run` |
+| `snapshot` | salva `calib_frame.jpg` (serve solo per la calibrazione a mano) |
+| `calibrate` | con il cassonetto **vuoto**: autocalibrazione con l'AI (sotto), mappa di riferimento, poi passa da sola a `run` |
 | `run` | funzionamento normale: misura, salva, prevede (le vecchie `run` e `predict` unite) |
 | `off` | visione disattivata, restano i sensori gas |
 
 Se mancano `onnxruntime` o `opencv`, la visione si disattiva da sola e il resto continua a funzionare.
+
+**Autocalibrazione con l'AI** (`auto_calibrate()`, attiva con `CFG["auto_calibration"] = True`). A cassonetto vuoto non si misura e non si disegna nulla a mano: tutto viene dalla mappa di Depth Anything più la distanza dal fondo letta dal ToF.
+
+- **Fondo:** la zona attorno al centro dove la profondità cambia lentamente (le pareti, sui margini della foto, cambiano in fretta). Diventa `bin_mask.png`.
+- **Pareti e distanze:** lungo una parete piana l'uscita del modello `d = a/Z + b` è una retta nell'immagine. Due pareti opposte sono parallele, quindi le loro rette si incontrano sulla linea di fuga, dove `Z` è infinita e `d = b`: così si ricava lo spostamento `b`, anche con la camera un po' inclinata. Il ToF dà la scala: `a = (d_fondo − b) · Z_fondo`.
+- **Fascia di riferimento:** la striscia sul margine più vicino alla camera, cioè quella che resta scoperta più a lungo. Diventa `rim_mask.png`; la sua distanza è `a / (d_fascia − b)`.
+- **Pieno:** rifiuti fino al livello della fascia, quindi `bin_depth_mm = Z_fondo − distanza della fascia`. Con `CFG["full_dist_mm"]` si può fissare un altro livello.
+
+Distanze e stime finiscono in `calib_ab.json`. In `calib_overlay.jpg` si vede che cosa ha trovato l'AI: fondo in verde, fascia in rosso, punto del ToF, accanto alla mappa di profondità. Se le due coppie di pareti danno distanze troppo diverse, compare un avviso: la camera è storta o fuori centro, e conviene raddrizzarla e ricalibrare.
+
+Sulla scatola della demo (fondo a 220 mm) l'AI trova la fascia alta a circa 90 mm (stime fra 86 e 94 mm) e il fondo esattamente dove si vede nella foto. Un errore sulla distanza della fascia non sposta gli strati uniformi, perché il ToF ancora la misura proprio all'altezza dei rifiuti. Pesa invece sui mucchi più alti o più bassi del punto del ToF: circa il 10% della loro altezza per 10 mm di errore.
 
 ### 5. Storico e previsione del pieno (`fill_history.py`)
 
@@ -297,11 +308,12 @@ Per provare l'API in locale: `cd cloud && npm install && npx vercel dev` (con `.
 
 ### Calibrazione della visione (una volta per cassonetto)
 
-1. Avviare in `snapshot` (o in `run`: se mancano le maschere il fotogramma viene salvato comunque) e aprire `python/calib_frame.jpg`.
-2. Disegnare in bianco su nero, alla stessa risoluzione, `python/bin_mask.png` (interno del cassonetto) e `python/rim_mask.png` (bordo, mai coperto dai rifiuti).
-3. In `depth_fill.CFG` impostare `rim_dist_mm` (camera → bordo), `bin_depth_mm` (bordo → fondo) e `tof_px` (il pixel di `calib_frame.jpg` dove cade il raggio del ToF).
-4. Con il cassonetto **vuoto**, avviare in `calibrate`: crea `empty_depth.npy` e `calib_ab.json` e passa da sola a `run`.
-5. Sul cassonetto vero mettere `SIMULATED_HISTORY = False` e cancellare l'eventuale `data/fill_log.csv` simulato.
+1. Fissare il telefono sotto il coperchio, rivolto verso il centro del fondo, e il ToF accanto all'obiettivo, rivolto nella stessa direzione. Dopo la calibrazione la camera non va più mossa.
+2. Con il cassonetto **vuoto**, avviare in `calibrate`. L'AI crea `bin_mask.png`, `rim_mask.png`, `empty_depth.npy` e `calib_ab.json`, poi l'app passa da sola a `run`. In console compaiono la distanza dal fondo (ToF), la fascia di riferimento e il livello di pieno.
+3. Aprire `python/calib_overlay.jpg` e controllare che il verde copra il fondo e il rosso stia su una parete. Se compare l'avviso sulle pareti, raddrizzare la camera e ricalibrare.
+4. Sul cassonetto vero mettere `SIMULATED_HISTORY = False` e cancellare l'eventuale `data/fill_log.csv` simulato. Altrimenti la prima misura vera, confrontata con l'ultima simulata, viene letta come uno svuotamento.
+
+Calibrazione a mano, se serve: `CFG["auto_calibration"] = False`, avviare in `snapshot`, disegnare in bianco su nero `bin_mask.png` (fondo) e `rim_mask.png` (riferimento) su `calib_frame.jpg`, impostare in `CFG` `rim_dist_mm`, `bin_depth_mm` e `tof_px`, poi `calibrate`.
 
 ## Parametri da tarare
 
@@ -312,7 +324,8 @@ Per provare l'API in locale: `cd cloud && npm install && npx vercel dev` (con `.
 | `python/main.py` | `FILL_WARN_PCT`, `FILL_FULL_PCT` | 80%, 95% |
 | `python/main.py` | `SIMULATED_HISTORY` | `True` (demo) |
 | `python/main.py` | `PHONE_IP`, `PORT`, `USE_HTTPS`, `FLASH_LEVEL`, `FLASH_SETTLE_S` | camera e flash |
-| `python/depth_fill.py` | `CFG`: `rim_dist_mm`, `bin_depth_mm`, `tof_px`, `emptied_drop_pct` | misure del cassonetto |
+| `python/depth_fill.py` | `CFG`: `auto_calibration`, `full_dist_mm`, `tof_px`, `emptied_drop_pct` | autocalibrazione attiva, pieno al livello della fascia, centro della foto, 30% |
+| `python/depth_fill.py` | `CFG`: `rim_dist_mm`, `bin_depth_mm` | solo per la calibrazione a mano (l'autocalibrazione li sovrascrive) |
 | `python/fill_history.py` | `WINDOW_DAYS`, `PROFILE_MIN_DAYS`, `TREND_CLAMP` | 30 g, 7 g, 0,5-2× |
 | `python/gas_alarm.py` | `GasAlarm(...)`: rapporto, delta minimo, tempi di conferma | 3×, 100 ppb, 10 s / 1,5×, 30 s |
 | `python/cloud_sync.py` | `SYNC_INTERVAL_S`, `MAX_ROWS_PER_BATCH`, `MAX_OUTBOX_ROWS` | 15 s, 400 righe, 100 000 righe |
@@ -327,9 +340,10 @@ Il criterio definitivo dell'allarme gas è ancora da decidere: i valori attuali 
 | `data/fill_log.csv` | storico delle misure di riempimento (anche quelle simulate) |
 | `data/sgp30_baseline.json` | baseline SGP30 da ripristinare all'avvio |
 | `python/last_frame.jpg` | ultima foto scattata |
-| `python/calib_frame.jpg` | fotogramma su cui disegnare le maschere |
-| `python/empty_depth.npy`, `python/calib_ab.json` | calibrazione a vuoto |
-| `python/bin_mask.png`, `python/rim_mask.png` | maschere disegnate a mano |
+| `python/calib_frame.jpg` | fotogramma della calibrazione |
+| `python/calib_overlay.jpg` | che cosa ha trovato l'AI: fondo, fascia, punto del ToF e mappa di profondità |
+| `python/empty_depth.npy`, `python/calib_ab.json` | calibrazione a vuoto, con le distanze trovate dall'AI |
+| `python/bin_mask.png`, `python/rim_mask.png` | fondo e fascia di riferimento (create dall'autocalibrazione) |
 | `data/cloud.json` | indirizzo del cloud e token del cassonetto (segreto) |
 | `data/cloud_outbox.sqlite` | coda dei dati non ancora inviati al cloud |
 
