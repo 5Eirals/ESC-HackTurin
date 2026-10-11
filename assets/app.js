@@ -115,8 +115,9 @@ function renderSample(s) {
   $('eco2').textContent = fmt(s.eco2_ppm);
   $('temp').textContent = fmt(s.temperature_c, 1);
   $('rh').textContent = fmt(s.humidity_pct, 1);
-  $('h2').textContent = fmt(s.h2_raw);
-  $('ethanol').textContent = fmt(s.ethanol_raw);
+  // Volte l'aria di riferimento (piu' alto = piu' gas); il valore grezzo, che va al contrario, resta nel tooltip
+  renderRatio($('h2'), s.h2_ratio, s.h2_raw);
+  renderRatio($('ethanol'), s.ethanol_ratio, s.ethanol_raw);
   if (s.ts) $('last-update').textContent = `Lettura delle ${timeFmt.format(s.ts * 1000)}`;
   setBadge($('sensor-aht'), s.aht_ok ? 'AHT20 ok' : 'AHT20 assente', s.aht_ok ? 'ok' : 'bad');
   if (!s.sgp_ok) setBadge($('sensor-sgp'), 'SGP30 assente', 'bad');
@@ -124,10 +125,23 @@ function renderSample(s) {
   else setBadge($('sensor-sgp'), 'SGP30 ok', 'ok');
 }
 
+function renderRatio(el, ratio, raw) {
+  el.textContent = ratio === null || ratio === undefined ? '—' : `${fmt(ratio, ratio < 10 ? 1 : 0)}×`;
+  el.title = raw === null || raw === undefined ? ''
+    : `Segnale grezzo ${raw} (più basso = più gas)${ratio === null || ratio === undefined ? ': riferimento in misura' : ''}`;
+}
+
 function renderAlarm(a) {
   if (!a) return;
   restTvoc = a.rest_tvoc_ppb;
   const banner = $('alarm-banner');
+  if (a.state === 'disabled') {
+    banner.classList.add('hidden');
+    setBadge($('alarm-state'), 'Allarme rapido disattivato (demo)', 'muted');
+    setTone($('kpi-gas-value'), null);
+    $('rest').textContent = "In demo conta l'indice di odore";
+    return;
+  }
   if (a.state === 'alert') {
     setBadge($('alarm-state'), 'Allarme gas', 'bad');
     $('alarm-text').textContent = `TVOC ${a.ratio}× il valore a riposo (soglia ${a.ratio_on}×). Evento inviato al centro di controllo.`;

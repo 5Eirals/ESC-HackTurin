@@ -116,6 +116,15 @@ class OdorMonitor:
         except OSError:
             return False
 
+    def instant_ratios(self, h2_raw: float, ethanol_raw: float):
+        """Quante volte H2 ed etanolo superano l'aria di riferimento in questo istante (non mediato).
+        Serve a leggere il sensore dal vivo: il valore grezzo va al contrario (piu' basso = piu' gas)."""
+        ref = self.reference
+        if ref is None:
+            return None, None
+        return (round(math.exp(raw_to_ln(h2_raw) - ref["h2"]), 2),
+                round(math.exp(raw_to_ln(ethanol_raw) - ref["eth"]), 2))
+
     def _combine(self, d_h2: float, d_eth: float) -> float:
         return max(d_h2, d_eth) if self.p["combine"] == "max" else (d_h2 + d_eth) / 2
 

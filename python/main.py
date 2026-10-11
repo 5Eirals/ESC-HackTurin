@@ -79,6 +79,10 @@ SIMULATED_HISTORY = True
 # Odore percepito: modalita' demo = finestre di 60 s e soglie basse (1,3x / 2x) per mostrarlo dal
 # vivo in pochi minuti. Mettere False sul cassonetto vero (finestre di 30 min, soglie 2x / 5x).
 ODOR_DEMO_MODE = True
+# L'allarme gas rapido (gas_alarm.py) e' pensato per il sensore DENTRO il cassonetto (degrado,
+# principio d'incendio): in demo, con il sensore fuori e l'alcol come sorgente, darebbe allarmi
+# fuorvianti, quindi resta spento.
+GAS_ALARM_ENABLED = not ODOR_DEMO_MODE
 
 HISTORY_SIZE = 600           # campioni tenuti per i grafici (1/s -> 10 minuti)
 MAX_EVENTS = 100              # eventi tenuti nel centro di controllo
@@ -215,6 +219,18 @@ def now_str() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
+def format_ratio(ratio) -> str:
+    return "—" if ratio is None else f"{ratio:.1f}x" if ratio < 10 else f"{ratio:.0f}x"
+
+
+def gas_alarm_status(tvoc_ppb) -> dict:
+    """Stato dell'allarme gas rapido per dashboard e cloud ("disabled" in modalita' demo)."""
+    status = alarm.status(tvoc_ppb)
+    if not GAS_ALARM_ENABLED:
+        status["state"] = "disabled"
+    return status
+
+
 def push_event(kind: str, severity: str, title: str, message: str, values: dict | None = None) -> dict:
     """Crea un evento per il centro di controllo e lo invia alla dashboard."""
     global event_counter
@@ -308,6 +324,8 @@ def on_sensor_data(uptime_s, aht_ok, sgp_ok, temp_c, rh_pct, tvoc_ppb, eco2_ppm,
         "eco2_ppm": eco2_ppm if sgp_ok else None,
         "h2_raw": h2_raw if sgp_ok else None,
         "ethanol_raw": ethanol_raw if sgp_ok else None,
+        "h2_ratio": None,        # volte l'aria di riferimento (piu' alto = piu' gas), vedi odor_index
+        "ethanol_ratio": None,
         "aht_ok": bool(aht_ok),
         "sgp_ok": bool(sgp_ok),
         "sgp_warming_up": bool(warming),
@@ -319,12 +337,14 @@ def on_sensor_data(uptime_s, aht_ok, sgp_ok, temp_c, rh_pct, tvoc_ppb, eco2_ppm,
     result = None
     odor_events, odor_status = [], None
     if sgp_ok and not warming:
-        result = alarm.update(tvoc_ppb, sample["ts"])
+        if GAS_ALARM_ENABLED:
+            result = alarm.update(tvoc_ppb, sample["ts"])
         with odor_lock:
             odor_events = odor.add_sample(sample["ts"], h2_raw, ethanol_raw, sample["temperature_c"])
             if odor.last_eval == sample["ts"]:   # livello ricalcolato (una volta al minuto)
                 odor_status = odor.last_status
-    status = alarm.status(sample["tvoc_ppb"])
+            sample["h2_ratio"], sample["ethanol_ratio"] = odor.instant_ratios(h2_raw, ethanol_raw)
+    status = gas_alarm_status(sample["tvoc_ppb"])
 
     with lock:
         history.append(sample)
@@ -334,7 +354,8 @@ def on_sensor_data(uptime_s, aht_ok, sgp_ok, temp_c, rh_pct, tvoc_ppb, eco2_ppm,
 
     print(f"[{now_str()}] T={sample['temperature_c']}°C UR={sample['humidity_pct']}% "
           f"TVOC={sample['tvoc_ppb']} ppb eCO2={sample['eco2_ppm']} ppm "
-          f"H2={sample['h2_raw']} EtOH={sample['ethanol_raw']} "
+          f"H2={format_ratio(sample['h2_ratio'])} EtOH={format_ratio(sample['ethanol_ratio'])} "
+          f"(grezzi {sample['h2_raw']}/{sample['ethanol_raw']}) "
           f"allarme={status['state']} odore={odor.level or '—'}{' (riscaldamento)' if warming else ''}")
 
     ui.send_message("reading", {"sample": sample, "alarm": status})
@@ -384,7 +405,7 @@ def on_connect(sid):
             "bin": {"id": BIN_ID, "address": BIN_ADDRESS},
             "history": list(history),
             "events": list(events),
-            "alarm": alarm.status(last_sample["tvoc_ppb"] if last_sample else None),
+            "alarm": gas_alarm_status(last_sample["tvoc_ppb"] if last_sample else None),
         }
     with fill_lock:
         state["fill"] = fill_status()
@@ -626,7 +647,7 @@ def cloud_status() -> dict:
     """Stato attuale per il pannello di controllo: lo stesso che vede la dashboard locale."""
     with lock:
         sample = last_sample
-        alarm_status = alarm.status(sample["tvoc_ppb"] if sample else None)
+        alarm_status = gas_alarm_status(sample["tvoc_ppb"] if sample else None)
     with fill_lock:
         fill = fill_status(include_chart=False)   # la serie dei 30 giorni la ricostruisce il cloud
     with odor_lock:
@@ -661,5 +682,6 @@ else:
     print(f"Visione: modalita' {vision_mode}, camera {scheme}://{PHONE_IP}:{PORT}, "
           f"uno scatto ogni {CAPTURE_INTERVAL_S} s")
 print(f"Odore: profilo '{odor.profile}', mediana su {odor.status()['window_label']}, soglie "
-      f"{odor.p['yellow_ratio']}x / {odor.p['red_ratio']}x")
+      f"{odor.p['yellow_ratio']}x / {odor.p['red_ratio']}x; allarme gas rapido "
+      f"{'attivo' if GAS_ALARM_ENABLED else 'disattivato (modalita demo)'}")
 App.run(user_loop=loop)
