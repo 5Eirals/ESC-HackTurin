@@ -58,7 +58,7 @@ BIN_ADDRESS = "Via Vincenzo Vela 17, Torino"
 #                  (controllare python/calib_overlay.jpg), poi passa da sola a "run"
 #   "run"       -> funzionamento normale: foto + analisi di profondita' ogni CAPTURE_INTERVAL_S
 #   "off"/None  -> visione disattivata (solo sensori gas)
-VISION_MODE = "calibrate"   # dopo una calibrazione riuscita rimettere "run"
+VISION_MODE = "run"         # "calibrate" solo a cassonetto vuoto, per rifare la calibrazione
 VISION_MODES = ("snapshot", "calibrate", "run")
 
 CAPTURE_INTERVAL_S = 20      # prove: uno scatto ogni 20 s (in uso normale 300 = 5 minuti)
