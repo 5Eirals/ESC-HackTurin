@@ -527,19 +527,16 @@ def mcu_call(name, *args, timeout=5):
 
 
 def phone_torch(on):
-    """Accende o spegne la torcia del telefono (parametro torch dell'app IP camera)."""
-    state = "on" if on else "off"
-    last = None
-    for path in (f"/control/status?torch={state}", f"/?torch={state}"):
-        try:
-            conn, r = request(path)
-            r.read()
-            conn.close()
-            return True
-        except Exception as e:
-            last = e
-    print(f"[{now_str()}] Torcia del telefono: ERRORE {last}")
-    return False
+    """Accende o spegne la torcia del telefono. L'app IP camera applica i comandi solo come
+    parametri sulla pagina principale (/?torch=on): su /control/... li ignora e risponde 200."""
+    try:
+        conn, r = request(f"/?torch={'on' if on else 'off'}")
+        r.read()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[{now_str()}] Torcia del telefono: ERRORE {e}")
+        return False
 
 
 def take_photo():
