@@ -66,9 +66,16 @@ function renderOdor(o) {
   else if (o.state === 'insufficient') setBadge($('odor-badge'), 'Dati in raccolta…', 'warn');
   else if (o.level) setBadge($('odor-badge'), ...ODOR_LEVELS[o.level]);
 
+  const demo = o.profile === 'demo';
   const level = !settling && o.level ? ODOR_LEVELS[o.level] : null;
   setTone($('kpi-odor-value'), level ? level[1] : null);
-  $('odor-level-text').textContent = level ? level[0] : "Rispetto all'aria dopo lo svuotamento";
+  $('odor-level-text').textContent = level ? level[0]
+    : `${demo ? 'Modalità demo · ' : ''}Rispetto all'aria dopo lo svuotamento`;
+  if (o.window_label) {
+    document.querySelector('#odor-title .info-dot').dataset.tip =
+      `Sensore fuori dal cassonetto: mediana degli ultimi ${o.window_label} rispetto all'aria misurata dopo l'ultimo svuotamento.`
+      + (demo ? ` Modalità demo: finestre accorciate, soglie ${o.thresholds.yellow_ratio}× / ${o.thresholds.red_ratio}×.` : '');
+  }
 
   $('odor-ratio').textContent = o.ratio === null ? '—' : `${fmt(o.ratio, 1)}×`;
   const persistence = o.persistence === null ? null : o.persistence * 100;

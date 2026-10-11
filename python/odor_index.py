@@ -10,7 +10,11 @@ tornerebbe normale. I segnali grezzi H2 ed etanolo non hanno questa correzione e
 datasheet Sensirion, sono legati alla concentrazione da  ln(c) = costante - s / 512.
 Quindi (s_rif - s) / 512 = ln(c / c_rif): di quante volte l'aria e' piu' carica del riferimento.
 
-Indice = media dei due ln-rapporti (H2, etanolo), calcolata sulla MEDIANA degli ultimi 30 minuti.
+Indice = ln-rapporti di H2 ed etanolo combinati (media o massimo), sulla MEDIANA della finestra.
+Due profili:
+- "normale": finestre di 30 minuti, per il cassonetto vero;
+- "demo": finestre di 60 s e soglie basse, per mostrare il sistema dal vivo in pochi minuti
+  (es. gel igienizzante all'alcol in uno scatolone chiuso, sensore fuori).
 Le soglie sono un punto di partenza: vanno tarate con le prove (es. "senti odore? si'/no").
 
 Limite noto: i segnali grezzi dipendono anche da temperatura e umidita'; un forte cambio di
@@ -25,22 +29,41 @@ import time
 from collections import deque
 from pathlib import Path
 
-WINDOW_S = 30 * 60          # finestra della mediana
-REF_WINDOW_S = 30 * 60      # durata della raccolta del riferimento dopo uno svuotamento
-REF_MIN_SAMPLES = 300       # campioni minimi per fissare il riferimento (5 min a 1 Hz)
-MIN_WINDOW_FRACTION = 0.3   # serve almeno il 30% della finestra per giudicare
-EVAL_PERIOD_S = 60          # ogni quanto si ricalcola il livello
 RAW_SCALE = 512.0           # costante del datasheet SGP30 per i segnali grezzi
-
-# Soglie in unita' ln (ln 2 = "il doppio del riferimento"), da tarare
-YELLOW_LN = math.log(2)     # odore percepibile
-RED_LN = math.log(5)        # puzza: intervento
-RED_HOT_LN = math.log(3)    # puzza con il caldo
-HOT_C = 25.0
-MIN_PERSISTENCE = 0.6       # quota dei campioni della finestra sopra la soglia gialla
-HYSTERESIS_LN = 0.15        # per scendere di livello bisogna stare un po' sotto la soglia
-
 LEVELS = ("green", "yellow", "red")
+
+PROFILES = {
+    "normale": {
+        "window_s": 30 * 60,          # finestra della mediana
+        "ref_window_s": 30 * 60,      # durata della raccolta del riferimento dopo uno svuotamento
+        "ref_min_samples": 300,       # campioni minimi per fissare il riferimento (5 min a 1 Hz)
+        "min_window_fraction": 0.3,   # serve almeno questa quota della finestra per giudicare
+        "eval_period_s": 60,          # ogni quanto si ricalcola il livello
+        "yellow_ratio": 2.0,          # odore percepibile (volte il riferimento)
+        "red_ratio": 5.0,             # puzza: intervento
+        "red_hot_ratio": 3.0,         # puzza con il caldo
+        "hot_c": 25.0,
+        "min_persistence": 0.6,       # quota dei campioni della finestra sopra la soglia gialla
+        "hysteresis_ln": 0.15,        # per scendere di livello bisogna stare un po' sotto la soglia
+        "combine": "mean",            # media di H2 ed etanolo: piu' robusta al rumore
+        "reuse_saved_reference": True,
+    },
+    "demo": {
+        "window_s": 60,
+        "ref_window_s": 60,
+        "ref_min_samples": 30,
+        "min_window_fraction": 0.5,
+        "eval_period_s": 5,
+        "yellow_ratio": 1.3,
+        "red_ratio": 2.0,
+        "red_hot_ratio": 2.0,
+        "hot_c": 25.0,
+        "min_persistence": 0.5,
+        "hysteresis_ln": 0.08,
+        "combine": "max",             # l'alcol fa salire soprattutto l'etanolo: conta il canale piu' alto
+        "reuse_saved_reference": False,  # in demo il riferimento si misura sempre da capo
+    },
+}
 
 
 def raw_to_ln(raw: float) -> float:
@@ -48,11 +71,21 @@ def raw_to_ln(raw: float) -> float:
     return -raw / RAW_SCALE
 
 
+def format_duration(seconds: float) -> str:
+    return f"{round(seconds / 60)} min" if seconds >= 120 else f"{round(seconds)} s"
+
+
 class OdorMonitor:
-    def __init__(self, reference_path: Path):
+    def __init__(self, reference_path: Path, profile: str = "normale"):
+        self.profile = profile
+        self.p = PROFILES[profile]
+        self.yellow_ln = math.log(self.p["yellow_ratio"])
+        self.red_ln = math.log(self.p["red_ratio"])
+        self.red_hot_ln = math.log(self.p["red_hot_ratio"])
+
         self.reference_path = Path(reference_path)
         self.samples = deque()      # (ts, ln_h2, ln_ethanol, temp_c)
-        self.reference = self._load_reference()
+        self.reference = self._load_reference() if self.p["reuse_saved_reference"] else None
         self.collecting = None      # {"source", "start", "h2": [], "eth": []}
         self.level = None
         self.last_eval = None
@@ -83,6 +116,9 @@ class OdorMonitor:
         except OSError:
             return False
 
+    def _combine(self, d_h2: float, d_eth: float) -> float:
+        return max(d_h2, d_eth) if self.p["combine"] == "max" else (d_h2 + d_eth) / 2
+
     # --- campioni -------------------------------------------------------------------------
     def add_sample(self, ts: float, h2_raw: float, ethanol_raw: float, temp_c: float | None):
         """Aggiunge un campione valido (1 Hz). Ritorna la lista degli eventi da segnalare:
@@ -90,7 +126,7 @@ class OdorMonitor:
         ("level", old_level, new_level, status) quando cambia il livello di odore."""
         ln_h2, ln_eth = raw_to_ln(h2_raw), raw_to_ln(ethanol_raw)
         self.samples.append((ts, ln_h2, ln_eth, temp_c))
-        while self.samples and self.samples[0][0] < ts - WINDOW_S:
+        while self.samples and self.samples[0][0] < ts - self.p["window_s"]:
             self.samples.popleft()
 
         events = []
@@ -100,7 +136,7 @@ class OdorMonitor:
                 c["start"] = ts
             c["h2"].append(ln_h2)
             c["eth"].append(ln_eth)
-            if ts - c["start"] >= REF_WINDOW_S and len(c["h2"]) >= REF_MIN_SAMPLES:
+            if ts - c["start"] >= self.p["ref_window_s"] and len(c["h2"]) >= self.p["ref_min_samples"]:
                 self.reference = {"h2": statistics.median(c["h2"]), "eth": statistics.median(c["eth"]),
                                   "ts": ts, "source": c["source"]}
                 self.collecting = None
@@ -108,7 +144,7 @@ class OdorMonitor:
                 self.last_eval = None   # ricalcola subito con il nuovo riferimento
                 events.append(("reference", self.status(ts)))
 
-        if self.last_eval is None or ts - self.last_eval >= EVAL_PERIOD_S:
+        if self.last_eval is None or ts - self.last_eval >= self.p["eval_period_s"]:
             self.last_eval = ts
             old = self.level
             self.level = self._evaluate(ts)
@@ -125,11 +161,11 @@ class OdorMonitor:
         delta, persistence, temp = s["delta"], s["persistence"], s["temperature_c"]
 
         def level_for(margin, need_persistence):
-            persistent = persistence >= MIN_PERSISTENCE or not need_persistence
-            hot = temp is not None and temp >= HOT_C
-            if persistent and (delta >= RED_LN - margin or (hot and delta >= RED_HOT_LN - margin)):
+            persistent = persistence >= self.p["min_persistence"] or not need_persistence
+            hot = temp is not None and temp >= self.p["hot_c"]
+            if persistent and (delta >= self.red_ln - margin or (hot and delta >= self.red_hot_ln - margin)):
                 return "red"
-            if persistent and delta >= YELLOW_LN - margin:
+            if persistent and delta >= self.yellow_ln - margin:
                 return "yellow"
             return "green"
 
@@ -137,7 +173,7 @@ class OdorMonitor:
         # scendere sotto la soglia meno l'isteresi (la persistenza da sola non basta).
         new = level_for(0.0, need_persistence=True)
         if self.level in LEVELS and LEVELS.index(new) < LEVELS.index(self.level):
-            hold = level_for(HYSTERESIS_LN, need_persistence=False)
+            hold = level_for(self.p["hysteresis_ln"], need_persistence=False)
             new = min(max(new, hold, key=LEVELS.index), self.level, key=LEVELS.index)
         s["level"] = new
         return new
@@ -146,25 +182,29 @@ class OdorMonitor:
         """Stato per la dashboard e per i messaggi degli eventi."""
         now = now if now is not None else time.time()
         ref = self.reference
+        p = self.p
         out = {
             "state": "ok",
             "level": self.level,
             "delta": None, "ratio": None, "delta_h2": None, "delta_ethanol": None,
             "persistence": None, "temperature_c": None,
-            "window_min": WINDOW_S // 60,
+            "profile": self.profile,
+            "window_s": p["window_s"],
+            "window_label": format_duration(p["window_s"]),
             "reference": None if ref is None else {
                 "source": ref["source"], "ts": ref["ts"], "age_h": round((now - ref["ts"]) / 3600, 1)},
             "collecting": None if self.collecting is None else {
                 "source": self.collecting["source"],
                 "progress": 0.0 if self.collecting["start"] is None else
-                round(min(1.0, (now - self.collecting["start"]) / REF_WINDOW_S), 2)},
-            "thresholds": {"yellow_ratio": 2, "red_ratio": 5, "red_hot_ratio": 3, "hot_c": HOT_C,
-                           "min_persistence": MIN_PERSISTENCE},
+                round(min(1.0, (now - self.collecting["start"]) / p["ref_window_s"]), 2)},
+            "thresholds": {"yellow_ratio": p["yellow_ratio"], "red_ratio": p["red_ratio"],
+                           "red_hot_ratio": p["red_hot_ratio"], "hot_c": p["hot_c"],
+                           "min_persistence": p["min_persistence"]},
         }
         if ref is None:
             out["state"] = "collecting"
             return out
-        if len(self.samples) < WINDOW_S * MIN_WINDOW_FRACTION:
+        if len(self.samples) < p["window_s"] * p["min_window_fraction"]:
             out["state"] = "insufficient"
             return out
 
@@ -172,8 +212,8 @@ class OdorMonitor:
         d_eth = [e - ref["eth"] for _, _, e, _ in self.samples]
         delta_h2 = statistics.median(d_h2)
         delta_eth = statistics.median(d_eth)
-        delta = (delta_h2 + delta_eth) / 2
-        above = sum(1 for a, b in zip(d_h2, d_eth) if (a + b) / 2 >= YELLOW_LN)
+        delta = self._combine(delta_h2, delta_eth)
+        above = sum(1 for a, b in zip(d_h2, d_eth) if self._combine(a, b) >= self.yellow_ln)
         temps = [t for *_, t in self.samples if t is not None]
         out.update({
             "delta": round(delta, 3),

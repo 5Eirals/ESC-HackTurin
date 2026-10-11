@@ -72,7 +72,11 @@ FILL_FULL_PCT = 95           # evento "pieno"
 # mostrare previsione e grafico. Mettere False sul cassonetto vero.
 SIMULATED_HISTORY = True
 
-HISTORY_SIZE = 600            # campioni tenuti per i grafici (1/s -> 10 minuti)
+# Odore percepito: modalita' demo = finestre di 60 s e soglie basse (1,3x / 2x) per mostrarlo dal
+# vivo in pochi minuti. Mettere False sul cassonetto vero (finestre di 30 min, soglie 2x / 5x).
+ODOR_DEMO_MODE = True
+
+HISTORY_SIZE = 600           # campioni tenuti per i grafici (1/s -> 10 minuti)
 MAX_EVENTS = 100              # eventi tenuti nel centro di controllo
 SGP30_WARMUP_S = 15           # dopo l'avvio l'SGP30 restituisce valori fissi per ~15 s
 BASELINE_MIN_RUNTIME_S = 600  # salva la baseline solo dopo 10 min di funzionamento continuo
@@ -183,9 +187,9 @@ def save(data):
 ui = WebUI()
 baseline_store = BaselineStore(DATA_DIR / "sgp30_baseline.json")
 alarm = GasAlarm()
-# Odore percepito vicino al cassonetto (SGP30 fuori dal cassonetto): mediana 30 min dei segnali
-# grezzi rispetto all'aria misurata dopo l'ultimo svuotamento. Vedi odor_index.py.
-odor = OdorMonitor(DATA_DIR / "odor_reference.json")
+# Odore percepito vicino al cassonetto (SGP30 fuori dal cassonetto): mediana dei segnali grezzi
+# rispetto all'aria misurata dopo l'ultimo svuotamento. Vedi odor_index.py.
+odor = OdorMonitor(DATA_DIR / "odor_reference.json", "demo" if ODOR_DEMO_MODE else "normale")
 odor_lock = threading.Lock()   # campioni dal Bridge, nuovo riferimento dal loop o dalla dashboard
 
 lock = threading.Lock()
@@ -266,10 +270,10 @@ def report_odor_event(event):
     kind, severity, title = ODOR_EVENTS[new]
     values = {k: s[k] for k in ("ratio", "persistence", "delta_h2", "delta_ethanol", "temperature_c")}
     if new == "green":
-        message = f"Aria {s['ratio']}x il riferimento (mediana {s['window_min']} min)."
+        message = f"Aria {s['ratio']}x il riferimento (mediana {s['window_label']})."
     else:
         temp = f", {s['temperature_c']} °C" if s["temperature_c"] is not None else ""
-        message = (f"Aria {s['ratio']}x piu' carica del riferimento (mediana {s['window_min']} min), "
+        message = (f"Aria {s['ratio']}x piu' carica del riferimento (mediana {s['window_label']}), "
                    f"sopra soglia per il {round(s['persistence'] * 100)}% del tempo{temp}.")
     push_event(kind, severity, title, message, values)
 
@@ -615,4 +619,6 @@ if vision_mode is None:
 else:
     print(f"Visione: modalita' {vision_mode}, camera {scheme}://{PHONE_IP}:{PORT}, "
           f"uno scatto ogni {CAPTURE_INTERVAL_S} s")
+print(f"Odore: profilo '{odor.profile}', mediana su {odor.status()['window_label']}, soglie "
+      f"{odor.p['yellow_ratio']}x / {odor.p['red_ratio']}x")
 App.run(user_loop=loop)
