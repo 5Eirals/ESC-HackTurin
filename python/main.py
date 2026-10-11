@@ -67,7 +67,7 @@ SNAPSHOT_TIMEOUT_S = 20      # attesa massima per uno scatto (l'app arriva a 14 
 PHONE_IP = "192.168.22.74"
 PORT = 4444
 USE_HTTPS = True
-USER, PASSWORD = "ESCam67", "ESCamotage23"   # login dell'app IP camera
+USER, PASSWORD = "ESCam67", "ESCamotage420"   # login dell'app IP camera
 
 SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_frame.jpg")
 
