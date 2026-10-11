@@ -37,7 +37,7 @@ def request(path, timeout=5):
     return conn, r
 
 
-# --- Lens --------------------------------------------------------------------------------
+# --- Lens ------------------------------------------------------------------------------------
 camera_id = None   # lens chosen at the first photo (pick_camera)
 
 
@@ -84,7 +84,7 @@ def select_camera_once():
         phone_command("camera", camera_id)
 
 
-# --- Photos ------------------------------------------------------------------------------
+# --- Photos ----------------------------------------------------------------------------------
 def phone_snapshot():
     # The app can take up to 14 s (it reopens the camera, retries): 5 s are not enough
     conn, r = request(f"/video/snapshot?camera={camera_id or 'back'}", timeout=SNAPSHOT_TIMEOUT_S)
@@ -157,7 +157,7 @@ def save(data):
         print("  (fotogramma non salvato:", e, ")")
 
 
-# --- Commands ----------------------------------------------------------------------------
+# --- Commands --------------------------------------------------------------------------------
 def phone_command(key, value):
     """Command to the IP camera app (v0.12): parameters on the main page, e.g. /?torch=on.
     On /control/... the app ignores the parameters and answers 200 anyway."""

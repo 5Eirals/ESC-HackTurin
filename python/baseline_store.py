@@ -1,7 +1,7 @@
-"""Salvataggio e ripristino della baseline dell'SGP30.
+"""Saving and restoring the SGP30 baseline.
 
-L'algoritmo dell'SGP30 impara la propria baseline in molte ore. Salvandola su file e
-rimandandola al sensore all'avvio, le letture sono stabili subito anche dopo un riavvio.
+The SGP30 algorithm learns its own baseline over many hours. By saving it to file and sending
+it back to the sensor at start-up, the readings are stable right away even after a restart.
 """
 
 import json
@@ -9,7 +9,7 @@ import os
 import time
 from pathlib import Path
 
-# Sensirion: una baseline piu' vecchia di 7 giorni non va ripristinata.
+# Sensirion: a baseline older than 7 days must not be restored.
 MAX_AGE_S = 7 * 24 * 3600
 
 
@@ -18,7 +18,7 @@ class BaselineStore:
         self.path = Path(path)
 
     def load(self) -> tuple[int, int] | None:
-        """Ritorna (eco2_base, tvoc_base) se c'e' una baseline valida e recente, altrimenti None."""
+        """Returns (eco2_base, tvoc_base) if there is a valid and recent baseline, otherwise None."""
         try:
             data = json.loads(self.path.read_text())
             if time.time() - float(data["saved_at"]) > MAX_AGE_S:
@@ -28,7 +28,7 @@ class BaselineStore:
             return None
 
     def save(self, eco2_base: int, tvoc_base: int) -> bool:
-        """Scrive la baseline in modo atomico (file temporaneo + rename)."""
+        """Writes the baseline atomically (temporary file + rename)."""
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")

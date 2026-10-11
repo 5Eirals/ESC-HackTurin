@@ -1,12 +1,12 @@
-# Simulazione geometrica del calcolo del riempimento (solo libreria standard, ~40 s).
-# Camera pinhole perpendicolare al fondo, 150 mm sopra il bordo, campo orizzontale 70 gradi;
-# cassonetto interno 1000 x 800 x 1100 mm. Profondita' PERFETTA (nessun errore del modello):
-# i numeri isolano l'errore dovuto al modo di aggregare e alla geometria.
-#   repo mediana  = metodo attuale di depth_fill.analyze() con bin_mask che include le pareti
-#   solo-fondo    = stessa mediana con una maschera che contiene solo il fondo
-#   mappa [a - b] = mappa altimetrica sul fondo: celle nascoste vuote (a) o piene fino alla linea di vista (b)
-#   con memoria   = mappa altimetrica in cui le celle nascoste tengono la quota vista nella foto precedente
-# Uso: python simulazione_riempimento.py
+# Geometric simulation of the fill computation (standard library only, ~40 s).
+# Pinhole camera perpendicular to the floor, 150 mm above the rim, 70 degree horizontal field;
+# bin inside 1000 x 800 x 1100 mm. PERFECT depth (no model error): the numbers isolate the
+# error due to the aggregation method and to the geometry.
+#   repo mediana  = current method of depth_fill.analyze() with a bin_mask that includes the walls
+#   solo-fondo    = same median with a mask that contains only the floor
+#   mappa [a - b] = height map of the floor: hidden cells empty (a) or full up to the line of sight (b)
+#   con memoria   = height map where hidden cells keep the height seen in the previous photo
+# Usage: python simulazione_riempimento.py
 import math, statistics
 
 W, H = 200, 150
@@ -46,7 +46,7 @@ def cell_of(x, y):
     return (min(max(i, 0), NX - 1), min(max(j, 0), NY - 1))
 
 def height_map(boxes):
-    """Quota vista per cella (None = nascosta) e limite superiore da linea di vista."""
+    """Height seen per cell (None = hidden) and upper bound from the line of sight."""
     seen = {}
     upper = {(i, j): DEPTH for i in range(NX) for j in range(NY)}
     for v in range(H):
@@ -57,10 +57,10 @@ def height_map(boxes):
                 continue
             _, z = hit(dx, dy, boxes)
             x, y = dx * z, dy * z
-            if abs(x) < BX - 1 and abs(y) < BY - 1:       # punto sul contenuto/fondo, non su parete
+            if abs(x) < BX - 1 and abs(y) < BY - 1:       # point on the contents/floor, not on a wall
                 c = cell_of(x, y)
                 seen[c] = max(seen.get(c, 0.0), FLOOR - z)
-            zs = RIM                                     # spazio libero lungo il raggio
+            zs = RIM                                     # free space along the ray
             while zs < z - 5:
                 xs, ys = dx * zs, dy * zs
                 if abs(xs) < BX and abs(ys) < BY:

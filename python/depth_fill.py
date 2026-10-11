@@ -59,7 +59,7 @@ CFG = {
     "calib_ab": "calib_ab.json",
 }
 
-# ---------------------------------------------------------------- MCU bridge
+# --- MCU bridge ------------------------------------------------------------------------------
 # LED ring and Modulino Distance live on the MCU side (see sketch.ino).
 # App Lab exposes them to Python through the Bridge; check the import path
 # against your App Lab version.
@@ -72,7 +72,7 @@ except Exception:
     def flash(on):        pass
     def tof_mm():         return -1
 
-# ---------------------------------------------------------------- capture
+# --- Capture ---------------------------------------------------------------------------------
 def capture():
     cap = cv2.VideoCapture(CFG["camera_index"])
     flash(True)
@@ -103,7 +103,7 @@ def decode_jpeg(data):
         raise ValueError("JPEG could not be decoded")
     return to_work_size(img)
 
-# ---------------------------------------------------------------- inference
+# --- Inference -------------------------------------------------------------------------------
 _sess = None
 _last_waste_mm = 0.0      # last waste height measured by the ToF
 def infer(img_bgr):
@@ -118,7 +118,7 @@ def infer(img_bgr):
     h, w = img_bgr.shape[:2]
     return cv2.resize(d, (w, h), interpolation=cv2.INTER_LINEAR)
 
-# ---------------------------------------------------------------- scale fit
+# --- Scale fit -------------------------------------------------------------------------------
 def load_mask(path, shape):
     m = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if m is None:
@@ -194,7 +194,7 @@ def to_metric_anchored(d, same, empty_z, tof_distance_mm):
         keep = r <= np.percentile(r[keep], 80)
     return 1.0 / np.clip(a * d + b, 1e-6, None), (a, b), pinned
 
-# ---------------------------------------------------------------- calibration state
+# --- Calibration state -----------------------------------------------------------------------
 def missing_calibration():
     """Files still needed before fill can be measured (empty list = ready)."""
     need = [CFG["bin_mask"], CFG["rim_mask"], CFG["empty_depth"]]
@@ -214,7 +214,7 @@ def load_geometry():
             if key in saved:
                 CFG[key] = saved[key]
 
-# ---------------------------------------------------------------- auto-calibration
+# --- Auto-calibration ------------------------------------------------------------------------
 # With the bin EMPTY the AI depth map replaces the measurements by hand.
 # - Floor: the flat region around the image centre (one plane in the depth map).
 # - Walls: along a plane the model output d = a/Z + b is a straight line in the image. Two
@@ -360,7 +360,7 @@ def save_overlay(img, d, floor, band):
                               cv2.COLORMAP_INFERNO)
     cv2.imwrite(CFG["calib_overlay"], np.hstack([over, depth]))
 
-# ---------------------------------------------------------------- analysis
+# --- Analysis --------------------------------------------------------------------------------
 class FillTracker:
     """Temporal median filter over the last 3 measurements + emptying detection."""
     def __init__(self, last=None):
@@ -432,7 +432,7 @@ def analyze(img, tracker, tof_distance_mm=None):
         "anchors_pct": round(100 * anchors, 1),  # share of the floor covered by waste
     }
 
-# ---------------------------------------------------------------- modes
+# --- Modes -----------------------------------------------------------------------------------
 def snapshot(img=None):
     cv2.imwrite(CFG["calib_frame"], capture() if img is None else img)
     if CFG["auto_calibration"]:

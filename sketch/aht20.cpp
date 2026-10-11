@@ -10,13 +10,13 @@ const uint8_t CMD_MEASURE[] = {0xAC, 0x33, 0x00};
 const uint8_t STATUS_BUSY = 0x80;
 const uint8_t STATUS_CALIBRATED = 0x08;
 
-const uint8_t FRAME_LEN = 7;          // stato + 5 byte di dati + CRC
+const uint8_t FRAME_LEN = 7;          // status + 5 data bytes + CRC
 const float RAW_FULL_SCALE = 1048576.0f;  // 2^20
 }  // namespace
 
 bool AHT20::begin(TwoWire &wire) {
   _wire = &wire;
-  delay(40);  // tempo di avvio dopo l'accensione (datasheet)
+  delay(40);  // start-up time after power-on (datasheet)
 
   uint8_t status;
   if (!readStatus(status)) return false;
@@ -45,7 +45,7 @@ bool AHT20::read(float &temperatureC, float &humidityPct) {
   _wire->beginTransmission(ADDRESS);
   _wire->write(CMD_MEASURE, sizeof(CMD_MEASURE));
   if (_wire->endTransmission() != 0) return false;
-  delay(80);  // durata della misura (datasheet)
+  delay(80);  // measurement time (datasheet)
 
   uint8_t buf[FRAME_LEN];
   for (uint8_t attempt = 0;; attempt++) {

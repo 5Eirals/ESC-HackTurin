@@ -3,27 +3,27 @@
 #include <Arduino.h>
 #include <Wire.h>
 
-// Driver minimale per il sensore di gas Sensirion SGP30 (indirizzo I2C 0x58).
-// Dopo begin() l'algoritmo interno restituisce valori fissi (eCO2 400 ppm, TVOC 0 ppb) per ~15 s,
-// e measureIAQ() va chiamata ogni ~1 s perche' la compensazione dinamica della baseline funzioni.
+// Minimal driver for the Sensirion SGP30 gas sensor (I2C address 0x58).
+// After begin() the internal algorithm returns fixed values (eCO2 400 ppm, TVOC 0 ppb) for ~15 s,
+// and measureIAQ() must be called every ~1 s for the dynamic baseline compensation to work.
 class SGP30 {
  public:
   static constexpr uint8_t ADDRESS = 0x58;
 
-  // Legge il numero di serie (verifica di presenza) e avvia l'algoritmo IAQ.
+  // Reads the serial number (presence check) and starts the IAQ algorithm.
   bool begin(TwoWire &wire = Wire);
 
   bool measureIAQ(uint16_t &eco2Ppm, uint16_t &tvocPpb);
-  // Segnali grezzi H2 ed etanolo: rispondono prima di eCO2/TVOC, utili per l'analisi.
+  // Raw H2 and ethanol signals: they react before eCO2/TVOC, useful for the analysis.
   bool measureRaw(uint16_t &h2Raw, uint16_t &ethanolRaw);
 
   bool getBaseline(uint16_t &eco2Base, uint16_t &tvocBase);
   bool setBaseline(uint16_t eco2Base, uint16_t tvocBase);
 
-  // Umidita' assoluta in g/m^3 per la compensazione; 0 la disattiva.
+  // Absolute humidity in g/m^3 for the compensation; 0 disables it.
   bool setAbsoluteHumidity(float gramsPerM3);
 
-  // Umidita' assoluta (g/m^3) da temperatura (°C) e umidita' relativa (%), formula del datasheet.
+  // Absolute humidity (g/m^3) from temperature (°C) and relative humidity (%), datasheet formula.
   static float absoluteHumidity(float temperatureC, float humidityPct);
 
   uint64_t serialNumber() const { return _serial; }

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>TO-Breath · Cassonetto smart</title>
     <script>
-      // Tema prima del primo disegno: la scelta salvata, altrimenti quella del sistema.
+      // Theme before the first paint: the saved choice, otherwise the system one.
       (function () {
         var saved = null;
         try { saved = localStorage.getItem('tema'); } catch (e) {}
@@ -21,7 +21,7 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <!-- Icone Lucide (ISC), come nel kit IAMAimpresa -->
+    <!-- Lucide icons (ISC), as in the IAMAimpresa kit -->
     <svg width="0" height="0" style="position: absolute" aria-hidden="true">
       <symbol id="i-bin" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" /></symbol>
       <symbol id="i-wind" viewBox="0 0 24 24"><path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2" /><path d="M9.6 4.6A2 2 0 1 1 11 8H2" /><path d="M12.6 19.4A2 2 0 1 0 14 16H2" /></symbol>
@@ -88,7 +88,7 @@
             </div>
           </div>
 
-          <!-- Banda 1: i numeri -->
+          <!-- Band 1: the numbers -->
           <section class="kpi-grid" aria-label="Riepilogo">
             <div class="card kpi">
               <p class="kpi-title">Riempimento</p>
@@ -112,7 +112,7 @@
             </div>
           </section>
 
-          <!-- Banda 2: il grafico del riempimento -->
+          <!-- Band 2: the fill chart -->
           <section class="card" id="riempimento" aria-labelledby="fill-title">
             <div class="card-head">
               <div class="card-head-text">
@@ -132,7 +132,7 @@
             </div>
           </section>
 
-          <!-- Banda 3: dettagli di riempimento e odore -->
+          <!-- Band 3: fill and odour details -->
           <div class="band-pair">
             <section class="card section-card" aria-labelledby="level-title">
               <div class="card-head">
@@ -196,7 +196,7 @@
             </section>
           </div>
 
-          <!-- Banda 4: sensori in tempo reale -->
+          <!-- Band 4: live sensors -->
           <section class="card section-card" id="sensori" aria-labelledby="live-title">
             <div class="card-head">
               <p class="card-title" id="live-title">Letture in tempo reale</p>
@@ -236,7 +236,7 @@
             </section>
           </div>
 
-          <!-- Banda 5: eventi verso il centro di controllo -->
+          <!-- Band 5: events to the control centre -->
           <section class="card section-card" id="eventi" aria-labelledby="cc-title">
             <div class="card-head">
               <p class="card-title" id="cc-title">

@@ -51,7 +51,7 @@ def track_sensor_health(name: str, ok: bool):
                    f"{SENSOR_FAULT_AFTER} letture fallite consecutive: serve un controllo tecnico.")
 
 
-# --- Perceived odour ---------------------------------------------------------------------
+# --- Perceived odour -------------------------------------------------------------------------
 ODOR_EVENTS = {
     "yellow": ("ODOR_NOTICEABLE", "warning", "Odore percepibile vicino al cassonetto"),
     "red": ("ODOR_STRONG", "critical", "Puzza vicino al cassonetto: serve un intervento"),
@@ -90,7 +90,7 @@ def new_odor_reference(source: str):
     state.ui.send_message("odor", status)
 
 
-# --- Callbacks from the microcontroller ----------------------------------------------------
+# --- Callbacks from the microcontroller ------------------------------------------------------
 def on_sensor_data(uptime_s, aht_ok, sgp_ok, temp_c, rh_pct, tvoc_ppb, eco2_ppm, h2_raw, ethanol_raw):
     warming = sgp_ok and sgp_started_uptime is not None and uptime_s - sgp_started_uptime < SGP30_WARMUP_S
 
@@ -179,7 +179,7 @@ def register():
     Bridge.provide("sgp30_baseline", on_sgp30_baseline)
 
 
-# --- SGP30 baseline restore (from the main loop) -------------------------------------------
+# --- SGP30 baseline restore (from the main loop) ---------------------------------------------
 def restore_baseline_if_needed():
     """Sends the saved baseline to the SGP30 after every (re)start of its algorithm."""
     global need_restore, baseline_restored

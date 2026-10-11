@@ -51,13 +51,13 @@ bool SGP30::getBaseline(uint16_t &eco2Base, uint16_t &tvocBase) {
 }
 
 bool SGP30::setBaseline(uint16_t eco2Base, uint16_t tvocBase) {
-  // Attenzione: in scrittura il datasheet vuole prima TVOC e poi eCO2 (ordine inverso alla lettura).
+  // Careful: when writing, the datasheet wants TVOC first and then eCO2 (reverse of the read order).
   const uint16_t args[2] = {tvocBase, eco2Base};
   return command(CMD_SET_IAQ_BASELINE, args, 2, 10, nullptr, 0);
 }
 
 bool SGP30::setAbsoluteHumidity(float gramsPerM3) {
-  // Formato a virgola fissa 8.8 (g/m^3); il massimo rappresentabile e' 255.996.
+  // 8.8 fixed-point format (g/m^3); the largest value it can hold is 255.996.
   if (gramsPerM3 < 0.0f) gramsPerM3 = 0.0f;
   if (gramsPerM3 > 255.0f) gramsPerM3 = 255.0f;
   const uint16_t arg = (uint16_t)lroundf(gramsPerM3 * 256.0f);
@@ -86,7 +86,7 @@ bool SGP30::command(uint16_t cmd, const uint16_t *args, uint8_t argCount, uint16
   delay(delayMs);
   if (outCount == 0) return true;
 
-  const size_t len = (size_t)outCount * 3;  // ogni parola: 2 byte + CRC
+  const size_t len = (size_t)outCount * 3;  // every word: 2 bytes + CRC
   if (_wire->requestFrom(ADDRESS, len) != len) return false;
   for (uint8_t i = 0; i < outCount; i++) {
     uint8_t word[2];

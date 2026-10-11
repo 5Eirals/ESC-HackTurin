@@ -1,24 +1,24 @@
-"""Indice di odore percepito vicino al cassonetto (sensore SGP30 montato FUORI dal cassonetto).
+"""Perceived odour index near the bin (SGP30 sensor mounted OUTSIDE the bin).
 
-Riferimento ("opzione 4", un solo sensore): l'aria misurata nei primi minuti dopo uno
-svuotamento, quando il cassonetto e' al minimo della puzza. Se non c'e' ancora nessuno
-svuotamento, si usa provvisoriamente l'aria dei primi minuti dopo l'avvio.
+Reference ("option 4", a single sensor): the air measured in the first minutes after an
+emptying, when the bin smells the least. If there has been no emptying yet, the air of the
+first minutes after start-up is used for the time being.
 
-Perche' i segnali grezzi e non il TVOC: l'algoritmo interno dell'SGP30 ricalcola lentamente
-il proprio valore di base, quindi un odore che dura ore verrebbe "assorbito" e il TVOC
-tornerebbe normale. I segnali grezzi H2 ed etanolo non hanno questa correzione e, dal
-datasheet Sensirion, sono legati alla concentrazione da  ln(c) = costante - s / 512.
-Quindi (s_rif - s) / 512 = ln(c / c_rif): di quante volte l'aria e' piu' carica del riferimento.
+Why the raw signals and not the TVOC: the SGP30 internal algorithm slowly recomputes its own
+baseline, so an odour lasting hours would be "absorbed" and the TVOC would go back to normal.
+The raw H2 and ethanol signals have no such correction and, from the Sensirion datasheet, are
+related to the concentration by  ln(c) = constant - s / 512.
+So (s_ref - s) / 512 = ln(c / c_ref): how many times the air is more loaded than the reference.
 
-Indice = ln-rapporti di H2 ed etanolo combinati (media o massimo), sulla MEDIANA della finestra.
-Due profili:
-- "normale": finestre di 30 minuti, per il cassonetto vero;
-- "demo": stesse soglie, ma finestre di 60 s, per mostrare il sistema dal vivo in pochi minuti
-  (es. gel igienizzante all'alcol accanto allo scatolone, sensore fuori).
-Le soglie sono un punto di partenza: vanno tarate con le prove (es. "senti odore? si'/no").
+Index = ln-ratios of H2 and ethanol combined (mean or maximum), on the MEDIAN of the window.
+Two profiles:
+- "normale": 30-minute windows, for the real bin;
+- "demo": same thresholds, but 60 s windows, to show the system live in a few minutes
+  (e.g. alcohol hand gel next to the cardboard box, sensor outside).
+The thresholds are a starting point: they must be tuned with tests (e.g. "do you smell it? yes/no").
 
-Limite noto: i segnali grezzi dipendono anche da temperatura e umidita'; un forte cambio di
-meteo rispetto al momento del riferimento puo' spostare l'indice.
+Known limit: the raw signals also depend on temperature and humidity; a big change in the
+weather since the reference was taken can shift the index.
 """
 
 import json
@@ -29,23 +29,23 @@ import time
 from collections import deque
 from pathlib import Path
 
-RAW_SCALE = 512.0           # costante del datasheet SGP30 per i segnali grezzi
+RAW_SCALE = 512.0           # SGP30 datasheet constant for the raw signals
 LEVELS = ("green", "yellow", "red")
 
 PROFILES = {
     "normale": {
-        "window_s": 30 * 60,          # finestra della mediana
-        "ref_window_s": 30 * 60,      # durata della raccolta del riferimento dopo uno svuotamento
-        "ref_min_samples": 300,       # campioni minimi per fissare il riferimento (5 min a 1 Hz)
-        "min_window_fraction": 0.3,   # serve almeno questa quota della finestra per giudicare
-        "eval_period_s": 60,          # ogni quanto si ricalcola il livello
-        "yellow_ratio": 2.0,          # odore percepibile (volte il riferimento)
-        "red_ratio": 5.0,             # puzza: intervento
-        "red_hot_ratio": 3.0,         # puzza con il caldo
+        "window_s": 30 * 60,          # median window
+        "ref_window_s": 30 * 60,      # how long the reference is collected after an emptying
+        "ref_min_samples": 300,       # minimum samples to set the reference (5 min at 1 Hz)
+        "min_window_fraction": 0.3,   # at least this share of the window is needed to judge
+        "eval_period_s": 60,          # how often the level is recomputed
+        "yellow_ratio": 2.0,          # noticeable odour (times the reference)
+        "red_ratio": 5.0,             # stench: intervention
+        "red_hot_ratio": 3.0,         # stench when it is hot
         "hot_c": 25.0,
-        "min_persistence": 0.6,       # quota dei campioni della finestra sopra la soglia gialla
-        "hysteresis_ln": 0.15,        # per scendere di livello bisogna stare un po' sotto la soglia
-        "combine": "mean",            # media di H2 ed etanolo: piu' robusta al rumore
+        "min_persistence": 0.6,       # share of the window samples above the yellow threshold
+        "hysteresis_ln": 0.15,        # to go down a level it must stay a bit below the threshold
+        "combine": "mean",            # mean of H2 and ethanol: more robust to noise
         "reuse_saved_reference": True,
     },
     "demo": {
@@ -54,20 +54,20 @@ PROFILES = {
         "ref_min_samples": 30,
         "min_window_fraction": 0.5,
         "eval_period_s": 5,
-        "yellow_ratio": 2.0,          # stesse soglie del profilo normale: cambiano solo i tempi
+        "yellow_ratio": 2.0,          # same thresholds as the normal profile: only the times change
         "red_ratio": 5.0,
         "red_hot_ratio": 3.0,
         "hot_c": 25.0,
         "min_persistence": 0.5,
         "hysteresis_ln": 0.08,
-        "combine": "max",             # l'alcol fa salire soprattutto l'etanolo: conta il canale piu' alto
-        "reuse_saved_reference": False,  # in demo il riferimento si misura sempre da capo
+        "combine": "max",             # alcohol mostly raises ethanol: the highest channel counts
+        "reuse_saved_reference": False,  # in the demo the reference is always measured from scratch
     },
 }
 
 
 def raw_to_ln(raw: float) -> float:
-    """ln della concentrazione (a meno di una costante) dal segnale grezzo SGP30."""
+    """ln of the concentration (up to a constant) from the raw SGP30 signal."""
     return -raw / RAW_SCALE
 
 
@@ -93,10 +93,10 @@ class OdorMonitor:
         if self.reference is None:
             self.start_reference("avvio")
 
-    # --- riferimento ----------------------------------------------------------------------
+    # --- Reference ---------------------------------------------------------------------------
     def start_reference(self, source: str):
-        """Inizia a raccogliere un nuovo riferimento (cassonetto appena svuotato).
-        La finestra parte dal primo campione ricevuto da qui in poi."""
+        """Starts collecting a new reference (bin just emptied).
+        The window starts from the first sample received from now on."""
         self.collecting = {"source": source, "start": None, "h2": [], "eth": []}
 
     def _load_reference(self):
@@ -117,8 +117,8 @@ class OdorMonitor:
             return False
 
     def instant_ratios(self, h2_raw: float, ethanol_raw: float):
-        """Quante volte H2 ed etanolo superano l'aria di riferimento in questo istante (non mediato).
-        Serve a leggere il sensore dal vivo: il valore grezzo va al contrario (piu' basso = piu' gas)."""
+        """How many times H2 and ethanol exceed the reference air at this instant (not averaged).
+        Used to read the sensor live: the raw value goes the other way (lower = more gas)."""
         ref = self.reference
         if ref is None:
             return None, None
@@ -128,11 +128,11 @@ class OdorMonitor:
     def _combine(self, d_h2: float, d_eth: float) -> float:
         return max(d_h2, d_eth) if self.p["combine"] == "max" else (d_h2 + d_eth) / 2
 
-    # --- campioni -------------------------------------------------------------------------
+    # --- Samples -----------------------------------------------------------------------------
     def add_sample(self, ts: float, h2_raw: float, ethanol_raw: float, temp_c: float | None):
-        """Aggiunge un campione valido (1 Hz). Ritorna la lista degli eventi da segnalare:
-        ("reference", status) quando un nuovo riferimento e' pronto,
-        ("level", old_level, new_level, status) quando cambia il livello di odore."""
+        """Adds a valid sample (1 Hz). Returns the list of events to report:
+        ("reference", status) when a new reference is ready,
+        ("level", old_level, new_level, status) when the odour level changes."""
         ln_h2, ln_eth = raw_to_ln(h2_raw), raw_to_ln(ethanol_raw)
         self.samples.append((ts, ln_h2, ln_eth, temp_c))
         while self.samples and self.samples[0][0] < ts - self.p["window_s"]:
@@ -150,7 +150,7 @@ class OdorMonitor:
                                   "ts": ts, "source": c["source"]}
                 self.collecting = None
                 self._save_reference()
-                self.last_eval = None   # ricalcola subito con il nuovo riferimento
+                self.last_eval = None   # recompute right away with the new reference
                 events.append(("reference", self.status(ts)))
 
         if self.last_eval is None or ts - self.last_eval >= self.p["eval_period_s"]:
@@ -161,12 +161,12 @@ class OdorMonitor:
                 events.append(("level", old or "green", self.level, self.last_status))
         return events
 
-    # --- valutazione ----------------------------------------------------------------------
+    # --- Evaluation --------------------------------------------------------------------------
     def _evaluate(self, now: float):
         self.last_status = self.status(now)
         s = self.last_status
         if s["state"] != "ok":
-            return self.level   # niente giudizio: resta il livello precedente
+            return self.level   # no judgement: the previous level stays
         delta, persistence, temp = s["delta"], s["persistence"], s["temperature_c"]
 
         def level_for(margin, need_persistence):
@@ -178,8 +178,8 @@ class OdorMonitor:
                 return "yellow"
             return "green"
 
-        # Per salire servono mediana sopra soglia E persistenza; per scendere la mediana deve
-        # scendere sotto la soglia meno l'isteresi (la persistenza da sola non basta).
+        # Going up needs the median above the threshold AND persistence; going down needs the
+        # median below the threshold minus the hysteresis (persistence alone is not enough).
         new = level_for(0.0, need_persistence=True)
         if self.level in LEVELS and LEVELS.index(new) < LEVELS.index(self.level):
             hold = level_for(self.p["hysteresis_ln"], need_persistence=False)
@@ -188,7 +188,7 @@ class OdorMonitor:
         return new
 
     def status(self, now: float | None = None) -> dict:
-        """Stato per la dashboard e per i messaggi degli eventi."""
+        """State for the dashboard and for the event messages."""
         now = now if now is not None else time.time()
         ref = self.reference
         p = self.p

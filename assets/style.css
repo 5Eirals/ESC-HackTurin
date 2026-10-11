@@ -1,11 +1,11 @@
-/* TO-Breath: impaginazione della dashboard. I componenti e i colori stanno in ds/ (design system
-   IAMAimpresa): qui solo la disposizione delle bande e i pezzi propri dell'app, con i token. */
+/* TO-Breath: dashboard layout. Components and colours live in ds/ (IAMAimpresa design
+   system): here only the layout of the bands and the app's own pieces, with the tokens. */
 
 html {
   scroll-padding-top: 4.5rem;
 }
 
-/* Due carte affiancate, una sotto l'altra sotto i 64rem */
+/* Two cards side by side, stacked below 64rem */
 .band-pair {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -40,7 +40,7 @@ html {
   margin-top: 0.5rem;
 }
 
-/* Letture in tempo reale: etichetta sopra, valore sotto, griglia 3 -> 2 colonne */
+/* Live readings: label above, value below, 3 -> 2 column grid */
 .letture {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -90,7 +90,7 @@ html {
   }
 }
 
-/* Eventi del centro di controllo: righe come MobileRow, stato a sinistra */
+/* Control centre events: rows like MobileRow, state on the left */
 .eventi {
   display: flex;
   flex-direction: column;

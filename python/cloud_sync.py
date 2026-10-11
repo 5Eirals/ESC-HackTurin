@@ -1,22 +1,23 @@
-"""Invio dei dati di TO-Breath al cloud (API su Vercel -> database Supabase).
+"""Upload of the TO-Breath data to the cloud (API on Vercel -> Supabase database).
 
-La scheda resta autonoma: data/fill_log.csv e gli altri file locali sono il dataset con cui lavora
-(previsione, dashboard locale) e la copia di sicurezza. Il cloud raccoglie i dati di tutti i cassonetti
-per il pannello di controllo.
+The board stays autonomous: data/fill_log.csv and the other local files are the dataset it works
+with (forecast, local dashboard) and the backup copy. The cloud collects the data of all the bins
+for the control panel.
 
-Cosa viene inviato (POST <url>/api/ingest, Authorization: Bearer <token del cassonetto>):
-- readings: gas, temperatura e umidita' mediati per minuto (la scheda legge ogni secondo);
-- fill:     ogni misura di riempimento (all'avvio anche lo storico del CSV non ancora inviato);
-- events:   gli eventi del centro di controllo, con un id unico (reinviarli non crea doppioni);
-- status:   lo stato attuale (allarme, odore, previsione del pieno, ultima lettura, ultimi 10 minuti
-            a passi di 10 s), sostituito a ogni invio.
-La risposta porta i comandi del pannello (es. "cassonetto appena svuotato").
+What is sent (POST <url>/api/ingest, Authorization: Bearer <bin token>):
+- readings: gas, temperature and humidity averaged per minute (the board reads every second);
+- fill:     every fill measurement (at start-up also the CSV history not sent yet);
+- events:   the control centre events, with a unique id (sending them again creates no duplicates);
+- status:   the current state (alarm, odour, time-to-full forecast, last reading, last 10 minutes
+            in 10 s steps), replaced at every upload.
+The answer carries the panel commands (e.g. "bin just emptied").
 
-Senza rete i dati restano in coda in data/cloud_outbox.sqlite e partono appena torna la connessione.
-Configurazione (se manca, il cloud e' semplicemente spento):
-- variabili d'ambiente TOBREATH_CLOUD_URL e TOBREATH_DEVICE_TOKEN, oppure
-- file data/cloud.json: {"url": "https://<progetto>.vercel.app", "token": "tbd_..."}
-Solo libreria standard.
+Without network the data stays queued in data/cloud_outbox.sqlite and leaves as soon as the
+connection is back.
+Configuration (when missing, the cloud is simply off):
+- environment variables TOBREATH_CLOUD_URL and TOBREATH_DEVICE_TOKEN, or
+- file data/cloud.json: {"url": "https://<project>.vercel.app", "token": "tbd_..."}
+Standard library only.
 """
 
 import json
@@ -30,12 +31,12 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-SYNC_INTERVAL_S = 15        # un invio ogni 15 s
-MAX_ROWS_PER_BATCH = 400    # righe della coda per invio (la coda si svuota a raffiche)
-MAX_BATCHES_PER_ROUND = 10  # dopo un periodo offline, al massimo 10 invii di fila
-MAX_OUTBOX_ROWS = 100_000   # oltre, si scartano le letture piu' vecchie (eventi e misure restano)
-RECENT_WINDOW_S = 600       # ultimi 10 minuti per i grafici del pannello...
-RECENT_BUCKET_S = 10        # ...a passi di 10 s
+SYNC_INTERVAL_S = 15        # one upload every 15 s
+MAX_ROWS_PER_BATCH = 400    # queue rows per upload (the queue empties in bursts)
+MAX_BATCHES_PER_ROUND = 10  # after a period offline, at most 10 uploads in a row
+MAX_OUTBOX_ROWS = 100_000   # beyond this, the oldest readings are dropped (events and measurements stay)
+RECENT_WINDOW_S = 600       # last 10 minutes for the panel charts...
+RECENT_BUCKET_S = 10        # ...in 10 s steps
 TIMEOUT_S = 15
 BACKOFF_MAX_S = 300
 READING_FIELDS = ("temperature_c", "humidity_pct", "tvoc_ppb", "eco2_ppm", "h2_raw", "ethanol_raw")
@@ -57,17 +58,17 @@ class CloudSync:
     def __init__(self, data_dir, address: str, status_provider, on_command, log=print):
         self.data_dir = Path(data_dir)
         self.address = address
-        self.status_provider = status_provider   # () -> dict, chiamata dal thread di invio
-        self.on_command = on_command             # (dict) -> None, comandi arrivati dal pannello
+        self.status_provider = status_provider   # () -> dict, called by the upload thread
+        self.on_command = on_command             # (dict) -> None, commands received from the panel
         self.log = log
         self.url, self.token = load_config(self.data_dir)
         self.enabled = bool(self.url and self.token)
-        self.boot = uuid.uuid4().hex[:8]         # rende unici gli id degli eventi tra un riavvio e l'altro
+        self.boot = uuid.uuid4().hex[:8]         # makes the event ids unique across restarts
         self.lock = threading.Lock()
-        self.minute = None                       # minuto in corso e somme per la media
+        self.minute = None                       # current minute and sums for the average
         self.sums, self.counts, self.samples, self.tvoc_max = {}, {}, 0, None
-        self.recent = deque()                    # (ts_fine_passo, tvoc medio, eco2 medio)
-        self.bucket = None                       # passo da 10 s in corso: [inizio, somma tvoc, n, somma eco2, n]
+        self.recent = deque()                    # (step_end_ts, mean tvoc, mean eco2)
+        self.bucket = None                       # current 10 s step: [start, tvoc sum, n, eco2 sum, n]
         self.last_ok = None
         self.failures = 0
         self.db = None
@@ -79,7 +80,7 @@ class CloudSync:
             self.db.execute("create table if not exists meta (key text primary key, value text not null)")
             self.db.commit()
 
-    # --- coda ------------------------------------------------------------------------------
+    # --- Queue -------------------------------------------------------------------------------
     def _enqueue(self, kind: str, payload: dict):
         with self.lock:
             self.db.execute("insert into outbox (kind, payload) values (?, ?)", (kind, json.dumps(payload)))
@@ -99,9 +100,9 @@ class CloudSync:
         with self.lock:
             return self.db.execute("select count(*) from outbox").fetchone()[0]
 
-    # --- dati dalla scheda -------------------------------------------------------------------
+    # --- Data from the board -----------------------------------------------------------------
     def add_sample(self, sample: dict):
-        """Una lettura al secondo: media al minuto per il cloud e passi da 10 s per i grafici."""
+        """One reading per second: per-minute average for the cloud and 10 s steps for the charts."""
         if not self.enabled:
             return
         ts = sample["ts"]
@@ -125,7 +126,7 @@ class CloudSync:
             self._enqueue("reading", finished)
 
     def _take_minute(self):
-        """Chiude il minuto in corso (da chiamare con il lock preso)."""
+        """Closes the current minute (to be called with the lock held)."""
         reading = {"ts": self.minute, "samples": min(self.samples, 120), "tvoc_max_ppb": self.tvoc_max}
         for field in READING_FIELDS:
             n = self.counts.get(field, 0)
@@ -179,7 +180,7 @@ class CloudSync:
             self.db.commit()
 
     def backfill_fill(self, rows: list[dict]) -> int:
-        """Mette in coda le righe del CSV non ancora inviate (tutto lo storico, al primo avvio)."""
+        """Queues the CSV rows not sent yet (the whole history, at the first start)."""
         if not self.enabled:
             return 0
         with self.lock:
@@ -195,7 +196,7 @@ class CloudSync:
             self.db.commit()
         return len(new)
 
-    # --- invio -----------------------------------------------------------------------------
+    # --- Upload ------------------------------------------------------------------------------
     def start(self):
         if not self.enabled:
             self.log("Cloud: non configurato (data/cloud.json o TOBREATH_CLOUD_URL/TOBREATH_DEVICE_TOKEN), "
@@ -210,7 +211,7 @@ class CloudSync:
             try:
                 self.sync_once()
                 self.failures = 0
-            except Exception as exc:  # rete assente, server giu', token sbagliato: si riprova piu' tardi
+            except Exception as exc:  # no network, server down, wrong token: retried later
                 self.failures += 1
                 delay = min(BACKOFF_MAX_S, SYNC_INTERVAL_S * 2 ** min(self.failures, 5))
                 if self.failures in (1, 3) or self.failures % 20 == 0:
@@ -219,7 +220,7 @@ class CloudSync:
             time.sleep(delay)
 
     def _flush_stale_minute(self):
-        """Se le letture si fermano, il minuto in corso parte comunque."""
+        """If the readings stop, the current minute is sent anyway."""
         finished = None
         with self.lock:
             if self.minute is not None and time.time() - self.minute > 120:
@@ -238,7 +239,7 @@ class CloudSync:
                 self.db.commit()
 
     def sync_once(self):
-        """Svuota la coda (a raffiche) e manda lo stato attuale. Solleva un'eccezione se fallisce."""
+        """Empties the queue (in bursts) and sends the current state. Raises an exception if it fails."""
         self._flush_stale_minute()
         self._trim_outbox()
         for _ in range(MAX_BATCHES_PER_ROUND):

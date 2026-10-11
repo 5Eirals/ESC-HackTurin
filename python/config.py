@@ -6,11 +6,11 @@ Everything that is meant to be edited by hand lives here; the other modules impo
 import os
 from pathlib import Path
 
-# --- Bin -----------------------------------------------------------------------------------
+# --- Bin -------------------------------------------------------------------------------------
 BIN_ID = "TO-0001"
 BIN_ADDRESS = "Via Vincenzo Vela 17, Torino"
 
-# --- Vision --------------------------------------------------------------------------------
+# --- Vision ----------------------------------------------------------------------------------
 # App Lab starts main.py without arguments, so the vision mode is chosen here
 # (or with an argument, the MODE environment variable or a mode.txt file next to main.py):
 #   "snapshot"  -> saves calib_frame.jpg (only needed to draw the masks by hand, with
@@ -38,14 +38,14 @@ CAMERA = "auto"
 
 SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_frame.jpg")
 
-# --- Fill level ----------------------------------------------------------------------------
+# --- Fill level ------------------------------------------------------------------------------
 FILL_WARN_PCT = 80           # "almost full" event
 FILL_FULL_PCT = 95           # "full" event
 # With no measurement yet, generate a month of INVENTED data (simulate_fill.py) to show the
 # forecast and the chart. Set to False on the real bin.
 SIMULATED_HISTORY = True
 
-# --- Gas and odour -------------------------------------------------------------------------
+# --- Gas and odour ---------------------------------------------------------------------------
 # Perceived odour, demo mode: 60 s windows instead of 30 min (same thresholds, 2x / 5x) to show
 # it live in a few minutes. Set to False on the real bin.
 ODOR_DEMO_MODE = True

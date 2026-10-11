@@ -1,6 +1,6 @@
-// Dashboard del cassonetto: letture in tempo reale, grafici e centro di controllo simulato.
-// Aspetto e colori vengono dal design system IAMAimpresa (ds/tokens.css, ds/components.css):
-// qui si usano solo i token, mai colori scritti a mano.
+// Bin dashboard: live readings, charts and the simulated control centre.
+// Look and colours come from the IAMAimpresa design system (ds/tokens.css, ds/components.css):
+// only the tokens are used here, never hand-written colours.
 
 const HISTORY_SIZE = 600;
 const MAX_EVENTS = 100;
@@ -14,7 +14,7 @@ const css = (name) => getComputedStyle(document.documentElement).getPropertyValu
 const chartFont = () => `11px ${getComputedStyle(document.body).fontFamily}`;
 const clampPct = (v) => Math.max(0, Math.min(100, v));
 
-// Stati della dashboard -> toni dello StatusBadge del design system
+// Dashboard states -> StatusBadge tones of the design system
 const TONES = { ok: 'success', warn: 'warning', bad: 'destructive', off: 'muted', info: 'info' };
 
 const ui = new WebUI();
@@ -45,14 +45,14 @@ function setBadge(el, text, kind) {
   el.className = `status status-${TONES[kind] ?? 'muted'}`;
 }
 
-// Il numero di una KpiCard si colora solo negli stati di attenzione
+// The number of a KpiCard is coloured only in the attention states
 function setTone(el, kind) {
   el.classList.remove('tone-warning', 'tone-destructive', 'tone-success');
   const tone = TONES[kind];
   if (tone === 'warning' || tone === 'destructive') el.classList.add(`tone-${tone}`);
 }
 
-// --- Odore percepito (odor_index.py) -------------------------------------------------------
+// --- Perceived odour (odor_index.py) -------------------------------------------------------
 const ODOR_LEVELS = {
   green: ['Nessun odore', 'ok'],
   yellow: ['Odore percepibile', 'warn'],
@@ -93,7 +93,7 @@ $('odor-reset').addEventListener('click', () => {
   ui.send_message('mark_emptied', {});
 });
 
-// --- Letture in tempo reale e allarme gas --------------------------------------------------
+// --- Live readings and gas alarm ------------------------------------------------------------
 const timeFmt = new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 ui.on_message('reading', (data) => {
@@ -112,7 +112,7 @@ function renderSample(s) {
   $('eco2').textContent = fmt(s.eco2_ppm);
   $('temp').textContent = fmt(s.temperature_c, 1);
   $('rh').textContent = fmt(s.humidity_pct, 1);
-  // Volte l'aria di riferimento (piu' alto = piu' gas); il valore grezzo, che va al contrario, resta nel tooltip
+  // Times the reference air (higher = more gas); the raw value, which goes the other way, stays in the tooltip
   renderRatio($('h2'), s.h2_ratio, s.h2_raw);
   renderRatio($('ethanol'), s.ethanol_ratio, s.ethanol_raw);
   if (s.ts) $('last-update').textContent = `Lettura delle ${timeFmt.format(s.ts * 1000)}`;
@@ -153,7 +153,7 @@ function renderAlarm(a) {
     : `A riposo ${a.rest_tvoc_ppb} ppb · ora ${a.ratio ?? '—'}×`;
 }
 
-// --- Centro di controllo -------------------------------------------------------------------
+// --- Control centre ------------------------------------------------------------------------
 const SEVERITY = { info: ['Info', 'info'], warning: ['Avviso', 'warn'], critical: ['Critico', 'bad'] };
 
 function textEl(tag, className, text) {
@@ -198,7 +198,7 @@ function addEvent(e) {
   updateEventCount();
 }
 
-// --- Grafici (geometria del kit: tratto 2 px, riferimento tratteggiato 4-3, sfumatura 16% -> 0) --
+// --- Charts (kit geometry: 2 px stroke, 4-3 dashed reference, 16% -> 0 gradient) -------------
 function prepareCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth;
@@ -228,7 +228,7 @@ function hline(ctx, x0, x1, y, color, width = 1) {
   ctx.stroke();
 }
 
-// Colore del token con trasparenza, per la sfumatura sotto la linea
+// Token colour with transparency, for the gradient under the line
 function withAlpha(color, alpha) {
   const hex = color.replace('#', '');
   if (/^[0-9a-f]{3}$|^[0-9a-f]{6}$/i.test(hex)) {
@@ -282,7 +282,7 @@ function drawSeries(canvas, values, color, refLine) {
     ctx.setLineDash([]);
   }
 
-  // Tratti continui (i valori mancanti spezzano la linea), ciascuno con la sua sfumatura
+  // Continuous segments (missing values break the line), each with its own gradient
   const segments = [];
   let current = null;
   values.forEach((v, i) => {
@@ -313,10 +313,10 @@ function drawSeries(canvas, values, color, refLine) {
 
 window.addEventListener('resize', () => { drawCharts(); drawFillChart(); });
 
-// --- Livello di riempimento -------------------------------------------------------------
-let fill = null;        // ultimo stato inviato da Python (fill_status in main.py)
-let fillHover = null;   // indice del punto evidenziato nel grafico (mouse o tastiera)
-let fillGeom = null;    // geometria dell'ultimo disegno, per il tooltip
+// --- Fill level --------------------------------------------------------------------------
+let fill = null;        // last state sent by Python (fill_status in vision.py)
+let fillHover = null;   // index of the highlighted point in the chart (mouse or keyboard)
+let fillGeom = null;    // geometry of the last drawing, for the tooltip
 
 const LEVELS = {
   ok: ['Nella norma', 'ok'],
@@ -386,7 +386,7 @@ function formatDuration(hours) {
   return `${m} min`;
 }
 
-// Il conto alla rovescia si aggiorna da solo: Python manda l'istante previsto, non le ore.
+// The countdown updates by itself: Python sends the forecast instant, not the hours.
 function renderEta() {
   const p = fill?.prediction;
   const last = fill?.last;
@@ -455,7 +455,7 @@ function drawFillChart() {
   const y = (v) => pad.top + (1 - v / 100) * (height - pad.top - pad.bottom);
   fillGeom = { x, y, t0, tEnd, tLast, pad, width, height, projecting };
 
-  // Griglia e assi con i token chart-grid e chart-axis
+  // Grid and axes with the chart-grid and chart-axis tokens
   ctx.font = chartFont();
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
@@ -464,11 +464,11 @@ function drawFillChart() {
     ctx.fillStyle = css('--chart-axis');
     ctx.fillText(`${v}%`, pad.left - 6, y(v));
   }
-  // Soglia "quasi pieno": uno stato, quindi il token warning
+  // "Almost full" threshold: a state, so the warning token
   const warn = fill.thresholds.warn;
   hline(ctx, pad.left, width - pad.right, y(warn), css('--warning'), 1.25);
 
-  // Asse dei tempi: una tacca a mezzanotte ogni 7 giorni
+  // Time axis: a tick at midnight every 7 days
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.fillStyle = css('--chart-axis');
@@ -481,7 +481,7 @@ function drawFillChart() {
   }
 
   const color = css('--chart-1');
-  // Sfumatura sotto la linea (16% -> 0)
+  // Gradient under the line (16% -> 0)
   ctx.beginPath();
   ctx.moveTo(x(pts[0][0]), y(0));
   pts.forEach(([t, v]) => ctx.lineTo(x(t), y(v)));
@@ -490,7 +490,7 @@ function drawFillChart() {
   ctx.fillStyle = areaGradient(ctx, color, pad.top, y(0));
   ctx.fill();
 
-  // Linea misurata (2 px)
+  // Measured line (2 px)
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.lineJoin = 'round';
@@ -501,7 +501,7 @@ function drawFillChart() {
 
   const lastV = pts[pts.length - 1][1];
   if (projecting) {
-    // Previsione: tratteggio dall'ultima misura fino al 100%
+    // Forecast: dashed from the last measurement up to 100%
     ctx.setLineDash([4, 3]);
     ctx.beginPath();
     ctx.moveTo(x(tLast), y(lastV));
@@ -509,17 +509,17 @@ function drawFillChart() {
     ctx.stroke();
     ctx.setLineDash([]);
     dot(ctx, x(p.full_at), y(100), color);
-    // Etichetta solo se c'e' spazio: su schermi stretti la data resta nella KPI "Pieno tra".
+    // Label only if there is room: on narrow screens the date stays in the "Pieno tra" KPI.
     if (width >= 560) {
       label(ctx, `pieno ${dateTimeFmt.format(p.full_at * 1000)}`, x(p.full_at) - 12, y(100),
         'right', 'middle', css('--foreground'));
     }
   }
   dot(ctx, x(tLast), y(lastV), color);
-  // Etichetta della soglia dopo i dati, cosi' resta leggibile sopra la linea
+  // Threshold label after the data, so it stays readable above the line
   label(ctx, `quasi pieno (${warn}%)`, pad.left + 4, y(warn) - 2, 'left', 'bottom', css('--chart-axis'));
 
-  // Evidenziazione (mouse o tastiera): linea verticale sul punto piu' vicino
+  // Highlight (mouse or keyboard): vertical line on the closest point
   if (fillHover !== null) {
     const isProj = fillHover === 'proj';
     const [t, v] = isProj ? [p.full_at, 100] : pts[fillHover];
@@ -533,7 +533,7 @@ function drawFillChart() {
   }
 }
 
-// Testo nel grafico con uno sfondo del colore della carta, cosi' le linee non lo attraversano.
+// Text in the chart on a background of the paper colour, so the lines do not cross it.
 function label(ctx, text, lx, ly, align, baseline, color) {
   ctx.font = chartFont();
   ctx.textAlign = align;
@@ -547,7 +547,7 @@ function label(ctx, text, lx, ly, align, baseline, color) {
   ctx.fillText(text, lx, ly);
 }
 
-// Punto attivo del kit: raggio 3,5 px con alone di 2 px nel colore della carta
+// Kit active point: 3.5 px radius with a 2 px halo in the paper colour
 function dot(ctx, cx, cy, color) {
   ctx.beginPath();
   ctx.arc(cx, cy, 5.5, 0, Math.PI * 2);
@@ -637,7 +637,7 @@ fillCanvas.addEventListener('keydown', (ev) => {
   if (!n) return;
   const cur = fillHover === null ? n - 1 : fillHover === 'proj' ? n : fillHover;
   const step = ev.shiftKey ? 24 : 1;
-  const max = fillGeom?.projecting ? n : n - 1;   // l'ultimo passo e' la previsione
+  const max = fillGeom?.projecting ? n : n - 1;   // the last step is the forecast
   let next = cur;
   if (ev.key === 'ArrowLeft') next = Math.max(0, cur - step);
   else if (ev.key === 'ArrowRight') next = Math.min(max, cur + step);
@@ -649,7 +649,7 @@ fillCanvas.addEventListener('keydown', (ev) => {
   setFillHover(next === n ? 'proj' : next);
 });
 
-// --- Tema chiaro/scuro (ThemeToggle del kit) ------------------------------------------------
+// --- Light/dark theme (kit ThemeToggle) -----------------------------------------------------
 const themeButton = $('theme-toggle');
 
 function syncThemeButton() {
@@ -667,22 +667,22 @@ function applyTheme(dark) {
 
 themeButton.addEventListener('click', () => {
   const dark = !document.documentElement.classList.contains('dark');
-  try { localStorage.setItem('tema', dark ? 'scuro' : 'chiaro'); } catch (e) { /* solo per questa visita */ }
+  try { localStorage.setItem('tema', dark ? 'scuro' : 'chiaro'); } catch (e) { /* only for this visit */ }
   applyTheme(dark);
 });
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (ev) => {
   let saved = null;
-  try { saved = localStorage.getItem('tema'); } catch (e) { /* nessuna scelta salvata */ }
+  try { saved = localStorage.getItem('tema'); } catch (e) { /* no saved choice */ }
   if (!saved) applyTheme(ev.matches);
 });
 syncThemeButton();
 
-// --- Sezione attiva nella navigazione (binario laterale e barra in basso) --------------------
+// --- Active section in the navigation (side rail and bottom bar) ----------------------------
 const SECTIONS = ['riempimento', 'odore', 'sensori', 'eventi'];
 const navLinks = [...document.querySelectorAll('[data-nav]')];
 
-// Attiva l'ultima sezione il cui inizio ha superato il 40% dello schermo; in fondo, l'ultima.
+// Activates the last section whose start has passed 40% of the screen; at the bottom, the last one.
 function updateActiveNav() {
   const line = window.innerHeight * 0.4;
   let current = SECTIONS[0];
@@ -696,5 +696,5 @@ window.addEventListener('scroll', updateActiveNav, { passive: true });
 window.addEventListener('resize', updateActiveNav);
 updateActiveNav();
 
-// I grafici si ridisegnano quando arriva il carattere Geist, per usarlo anche nelle etichette
+// The charts are redrawn when the Geist font arrives, to use it in the labels too
 document.fonts?.ready.then(() => { drawCharts(); drawFillChart(); });

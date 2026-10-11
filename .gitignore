@@ -1,11 +1,11 @@
-# Dati generati a runtime sulla UNO Q (baseline SGP30)
+# Data generated at runtime on the UNO Q (SGP30 baseline, fill log, cloud queue)
 data/
 
 __pycache__/
 *.pyc
 
-# Foto scattate a runtime
+# Photos taken at runtime
 python/last_frame.jpg
 
-# Contesto locale per Claude Code
+# Local context for Claude Code
 CLAUDE.md

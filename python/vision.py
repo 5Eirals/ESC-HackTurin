@@ -61,7 +61,7 @@ def init():
                     if depth_fill else None)
 
 
-# --- Fill level and forecast ---------------------------------------------------------------
+# --- Fill level and forecast -----------------------------------------------------------------
 def fill_level_name(pct):
     if pct is None:
         return "unknown"
@@ -226,7 +226,7 @@ def vision_step():
     check_fill_events(result["emptied"])
 
 
-# --- Steps of the main loop ----------------------------------------------------------------
+# --- Steps of the main loop ------------------------------------------------------------------
 def report_startup_fill():
     """At the first loop round, reports the initial fill state (e.g. already almost full).
     Done here and not at start-up because by now the WebUI is running."""

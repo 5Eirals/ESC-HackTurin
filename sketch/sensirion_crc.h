@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// CRC-8 usato sia da SGP30 sia da AHT20: polinomio 0x31 (x^8 + x^5 + x^4 + 1), valore iniziale 0xFF.
-// Esempio dal datasheet SGP30: crc8_31({0xBE, 0xEF}) == 0x92.
+// CRC-8 used by both SGP30 and AHT20: polynomial 0x31 (x^8 + x^5 + x^4 + 1), initial value 0xFF.
+// Example from the SGP30 datasheet: crc8_31({0xBE, 0xEF}) == 0x92.
 inline uint8_t crc8_31(const uint8_t *data, size_t len) {
   uint8_t crc = 0xFF;
   for (size_t i = 0; i < len; i++) {

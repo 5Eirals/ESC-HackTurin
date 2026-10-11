@@ -1,21 +1,21 @@
-"""Allarme gas RELATIVO al valore a riposo.
+"""Gas alarm RELATIVE to the resting value.
 
-Il criterio definitivo e' ancora da decidere: i parametri qui sotto sono un punto di
-partenza da tarare sul campo (es. col pennarello all'alcol durante le prove).
+The final criterion is still to be decided: the parameters below are a starting point to be
+tuned in the field (e.g. with the alcohol marker during the tests).
 
-Funzionamento:
-1. Per i primi `learn_s` secondi impara il TVOC "a riposo" (media).
-2. Poi il riposo segue lentamente l'ambiente (media mobile), ma solo quando non c'e' allarme.
-3. ALLARME se il TVOC resta sopra `ratio_on` volte il riposo (e di almeno `min_delta_ppb`)
-   per `hold_on_s` secondi consecutivi.
-4. FINE ALLARME quando torna sotto `ratio_off` volte il riposo per `hold_off_s` secondi.
+How it works:
+1. For the first `learn_s` seconds it learns the "resting" TVOC (average).
+2. Then the resting value slowly follows the environment (moving average), only when there is no alarm.
+3. ALARM if the TVOC stays above `ratio_on` times the resting value (and by at least `min_delta_ppb`)
+   for `hold_on_s` consecutive seconds.
+4. END OF ALARM when it goes back below `ratio_off` times the resting value for `hold_off_s` seconds.
 """
 
 LEARNING = "learning"
 NORMAL = "normal"
 ALERT = "alert"
 
-# Il TVOC a riposo puo' essere ~0 ppb: sotto questo valore il rapporto perderebbe significato.
+# The resting TVOC can be ~0 ppb: below this value the ratio would lose its meaning.
 MIN_REST_PPB = 10.0
 
 
@@ -32,7 +32,7 @@ class GasAlarm:
         self.reset()
 
     def reset(self):
-        """Ricomincia da capo (es. quando l'algoritmo del sensore riparte)."""
+        """Starts over (e.g. when the sensor algorithm restarts)."""
         self.state = LEARNING
         self.rest_tvoc = None
         self._learn_start = None
@@ -41,7 +41,7 @@ class GasAlarm:
         self._condition_since = None
 
     def update(self, tvoc_ppb: float, now_s: float) -> str | None:
-        """Aggiorna con un nuovo campione. Ritorna "ALERT", "CLEAR" oppure None."""
+        """Updates with a new sample. Returns "ALERT", "CLEAR" or None."""
         if self.state == LEARNING:
             if self._learn_start is None:
                 self._learn_start = now_s

@@ -1,23 +1,23 @@
-// TO-Breath in cloud: prende il posto di libs/arduino.js quando la dashboard e' servita da Vercel.
-// Stessa interfaccia della WebUI di Arduino (on_connect, on_disconnect, on_message, send_message), ma i dati
-// arrivano dall'API su Vercel (/api/bins, /api/bin) che legge Supabase: app.js e index.html restano
-// identici sulla scheda e in cloud.
+// TO-Breath in the cloud: replaces libs/arduino.js when the dashboard is served by Vercel.
+// Same interface as the Arduino WebUI (on_connect, on_disconnect, on_message, send_message), but the data
+// comes from the API on Vercel (/api/bins, /api/bin) that reads Supabase: app.js and index.html stay
+// identical on the board and in the cloud.
 //
-// Apertura: https://<progetto>.vercel.app/?key=<chiave del pannello>[&bin=TO-0001]
-// La chiave resta salvata nel browser e viene tolta dall'indirizzo.
+// Opening: https://<project>.vercel.app/?key=<panel key>[&bin=TO-0001]
+// The key stays saved in the browser and is removed from the address.
 
 (() => {
-  const POLL_MS = 10_000;          // ogni quanto si rilegge il cassonetto
-  const BINS_EVERY = 6;            // l'elenco dei cassonetti si rilegge ogni 6 giri (1 minuto)
-  const HISTORY_SIZE = 600;        // come app.js: 10 minuti a 1 lettura al secondo
-  const GAP_S = 30;                // buco nei dati: la linea del grafico si interrompe
+  const POLL_MS = 10_000;          // how often the bin is read again
+  const BINS_EVERY = 6;            // the list of bins is read again every 6 rounds (1 minute)
+  const HISTORY_SIZE = 600;        // as in app.js: 10 minutes at 1 reading per second
+  const GAP_S = 30;                // gap in the data: the chart line breaks
   const KEY_STORE = 'tobreath.panelKey';
   const BIN_STORE = 'tobreath.bin';
 
   const store = {
     get(name) { try { return localStorage.getItem(name); } catch { return null; } },
-    set(name, value) { try { localStorage.setItem(name, value); } catch { /* solo per questa visita */ } },
-    remove(name) { try { localStorage.removeItem(name); } catch { /* niente da togliere */ } },
+    set(name, value) { try { localStorage.setItem(name, value); } catch { /* only for this visit */ } },
+    remove(name) { try { localStorage.removeItem(name); } catch { /* nothing to remove */ } },
   };
 
   const timeFmt = new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -25,8 +25,8 @@
 
   class AuthError extends Error {}
 
-  // Le letture recenti arrivano ogni 10 s ([ts, tvoc, eco2]): si ricostruisce una lettura al secondo
-  // per i grafici di app.js, interpolando tra due punti vicini e lasciando vuoti i buchi.
+  // Recent readings arrive every 10 s ([ts, tvoc, eco2]): one reading per second is rebuilt for the
+  // app.js charts, interpolating between two close points and leaving the gaps empty.
   function expandRecent(recent, sample) {
     const pts = (recent ?? []).filter((p) => Array.isArray(p) && p.length >= 3).sort((a, b) => a[0] - b[0]);
     const lerp = (a, b, f) => (a === null || b === null ? (f < 0.5 ? a : b) : a + (b - a) * f);
@@ -47,11 +47,11 @@
       out.push({ ts: t, tvoc_ppb: tvoc, eco2_ppm: eco2 });
     }
     const history = out.slice(-(HISTORY_SIZE - 1));
-    if (sample) history.push(sample);   // l'ultima lettura completa: valori, sensori, riscaldamento
+    if (sample) history.push(sample);   // the last complete reading: values, sensors, warm-up
     return history;
   }
 
-  // La risposta di /api/bin nella forma del messaggio "snapshot" della scheda.
+  // The /api/bin answer in the shape of the board's "snapshot" message.
   function toSnapshot(s) {
     const now = Date.now() / 1000;
     return {
@@ -86,7 +86,7 @@
       }
       this.#key = key || store.get(KEY_STORE);
       this.#bin = (url.searchParams.get('bin') || store.get(BIN_STORE) || '').toUpperCase() || null;
-      // app.js registra le sue funzioni subito dopo `new WebUI()`: si parte al giro successivo.
+      // app.js registers its functions right after `new WebUI()`: start at the next round.
       setTimeout(() => this.#poll(), 0);
     }
 
@@ -138,7 +138,7 @@
         if (err instanceof AuthError) {
           store.remove(KEY_STORE);
           this.#problem('Chiave del pannello non valida');
-          return;   // inutile riprovare con la stessa chiave
+          return;   // no point retrying with the same key
         }
         console.error(err);
         this.#setOnline(false);
@@ -168,7 +168,7 @@
       this.#poll();
     }
 
-    // "Connesso" vuol dire che il cassonetto ha parlato con il cloud negli ultimi 2 minuti.
+    // "Connesso" means the bin talked to the cloud in the last 2 minutes.
     #setOnline(online) {
       if (online === this.#online) return;
       this.#online = online;
@@ -182,7 +182,7 @@
       badge.className = 'status status-destructive';
     }
 
-    // Con piu' cassonetti, un menu nell'intestazione sceglie quale guardare.
+    // With more bins, a menu in the header chooses which one to look at.
     #renderPicker() {
       const actions = document.querySelector('.header-actions');
       let select = document.getElementById('bin-picker');
@@ -194,7 +194,7 @@
         select = document.createElement('select');
         select.id = 'bin-picker';
         select.className = 'btn btn-outline btn-sm';
-        select.style.maxWidth = 'min(22rem, 42vw)';   // sul telefono lascia spazio al percorso
+        select.style.maxWidth = 'min(22rem, 42vw)';   // on the phone it leaves room for the path
         select.style.textOverflow = 'ellipsis';
         select.setAttribute('aria-label', 'Cassonetto');
         select.addEventListener('change', () => {

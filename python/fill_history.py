@@ -1,17 +1,17 @@
-"""Storico del livello di riempimento e previsione di quando il cassonetto sara' pieno.
+"""Fill level history and forecast of when the bin will be full.
 
-Ogni foto analizzata (depth_fill.analyze) aggiunge una riga a data/fill_log.csv:
-    timestamp, fill_pct, peak_pct, event ("emptied" se il cassonetto e' stato svuotato), source
+Every analysed photo (depth_fill.analyze) adds a row to data/fill_log.csv:
+    timestamp, fill_pct, peak_pct, event ("emptied" if the bin was emptied), source
 
-Previsione (ex modalita' "predict", ora eseguita dopo ogni misura di "run"):
-- con almeno PROFILE_MIN_DAYS giorni di dati: PROFILO SETTIMANALE. Per ciascuna delle 168 ore
-  della settimana si calcola il ritmo medio di riempimento (% all'ora) sugli ultimi 30 giorni,
-  cosi' la previsione sa che di notte il cassonetto si riempie poco e nel weekend di piu'.
-  Il profilo viene scalato sul ciclo in corso (se questa settimana si riempie piu' in fretta
-  del solito, la previsione si adegua) e proiettato in avanti dal livello attuale fino al 100%.
-- altrimenti: RETTA sui dati dall'ultimo svuotamento (il vecchio predict()).
+Forecast (formerly the "predict" mode, now run after every "run" measurement):
+- with at least PROFILE_MIN_DAYS days of data: WEEKLY PROFILE. For each of the 168 hours of the
+  week the average fill rate (% per hour) over the last 30 days is computed, so the forecast
+  knows that the bin fills little at night and more at the weekend.
+  The profile is scaled on the current cycle (if this week it fills faster than usual, the
+  forecast adapts) and projected forward from the current level up to 100%.
+- otherwise: STRAIGHT LINE on the data since the last emptying (the old predict()).
 
-Solo libreria standard: funziona anche se onnxruntime/opencv non sono installati.
+Standard library only: works even if onnxruntime/opencv are not installed.
 """
 
 import csv
@@ -23,15 +23,15 @@ from pathlib import Path
 FIELDS = ["timestamp", "fill_pct", "peak_pct", "event", "source"]
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 
-WINDOW_DAYS = 30          # dati tenuti in memoria e usati per profilo e statistiche
-PROFILE_MIN_DAYS = 7      # sotto questa durata di storico si usa la retta
-FULL_PCT = 100.0          # livello "pieno" per la previsione
-NEAR_FULL_PCT = 95.0      # un ciclo che arriva qui conta come "pieno prima della raccolta"
-MAX_GAP_H = 2.0           # coppie di misure piu' distanti non entrano nel profilo
-STEP_S = 900              # passo della proiezione (15 min)
-HORIZON_H = 30 * 24       # oltre questo orizzonte la previsione dice "non si riempie"
-TREND_MIN_H = 6           # durata minima del ciclo in corso per scalare il profilo
-TREND_CLAMP = (0.5, 2.0)  # limiti del fattore di scala sul ciclo in corso
+WINDOW_DAYS = 30          # data kept in memory and used for profile and statistics
+PROFILE_MIN_DAYS = 7      # with less history than this the straight line is used
+FULL_PCT = 100.0          # "full" level for the forecast
+NEAR_FULL_PCT = 95.0      # a cycle reaching this counts as "full before the collection"
+MAX_GAP_H = 2.0           # pairs of measurements further apart are left out of the profile
+STEP_S = 900              # projection step (15 min)
+HORIZON_H = 30 * 24       # beyond this horizon the forecast says "does not fill up"
+TREND_MIN_H = 6           # minimum length of the current cycle to scale the profile
+TREND_CLAMP = (0.5, 2.0)  # limits of the scale factor on the current cycle
 
 
 def hour_of_week(ts: float) -> int:
@@ -40,7 +40,7 @@ def hour_of_week(ts: float) -> int:
 
 
 def linear_fit(xs, ys):
-    """Minimi quadrati y = m*x + q. Ritorna (m, q)."""
+    """Least squares y = m*x + q. Returns (m, q)."""
     n = len(xs)
     mx, my = sum(xs) / n, sum(ys) / n
     sxx = sum((x - mx) ** 2 for x in xs)
@@ -57,7 +57,7 @@ class FillHistory:
         self.rows: list[dict] = []
         self.load()
 
-    # ------------------------------------------------------------------ file
+    # --- File --------------------------------------------------------------------------------
     def load(self):
         self.rows = []
         try:
@@ -72,7 +72,7 @@ class FillHistory:
                             "source": r.get("source") or "camera",
                         })
                     except (KeyError, ValueError, TypeError):
-                        continue  # riga corrotta: si salta
+                        continue  # corrupted row: skipped
         except OSError:
             pass
         self.rows.sort(key=lambda r: r["ts"])
@@ -102,13 +102,13 @@ class FillHistory:
             cutoff = self.rows[-1]["ts"] - self.window_s
             self.rows = [r for r in self.rows if r["ts"] >= cutoff]
 
-    # ------------------------------------------------------------------ analisi
+    # --- Analysis ----------------------------------------------------------------------------
     @property
     def last(self) -> dict | None:
         return self.rows[-1] if self.rows else None
 
     def current_cycle(self) -> list[dict]:
-        """Misure dall'ultimo svuotamento (compreso) a oggi."""
+        """Measurements from the last emptying (included) to now."""
         start = max((i for i, r in enumerate(self.rows) if r["event"] == "emptied"), default=0)
         return self.rows[start:]
 
@@ -116,7 +116,7 @@ class FillHistory:
         return (self.rows[-1]["ts"] - self.rows[0]["ts"]) / 86400 if len(self.rows) > 1 else 0.0
 
     def weekly_profile(self) -> list[float] | None:
-        """Ritmo medio di riempimento (% all'ora) per ciascuna delle 168 ore della settimana."""
+        """Average fill rate (% per hour) for each of the 168 hours of the week."""
         dy = [0.0] * 168
         dt = [0.0] * 168
         for a, b in zip(self.rows, self.rows[1:]):
@@ -124,7 +124,7 @@ class FillHistory:
             if hours <= 0 or hours > MAX_GAP_H or b["event"] == "emptied":
                 continue
             if a["fill_pct"] >= NEAR_FULL_PCT or b["fill_pct"] >= NEAR_FULL_PCT:
-                continue  # cassonetto pieno: non si vede piu' salire, falserebbe il ritmo
+                continue  # bin full: it can no longer be seen rising, it would distort the rate
             h = hour_of_week((a["ts"] + b["ts"]) / 2)
             dy[h] += b["fill_pct"] - a["fill_pct"]
             dt[h] += hours
@@ -132,16 +132,16 @@ class FillHistory:
         if total_dt == 0:
             return None
         overall = sum(dy) / total_dt
-        # Il rumore della misura si compensa sommando prima di dividere; le ore senza dati
-        # prendono il ritmo medio generale.
+        # Measurement noise cancels out by summing before dividing; hours without data
+        # take the overall average rate.
         return [max(0.0, dy[h] / dt[h]) if dt[h] > 0 else max(0.0, overall) for h in range(168)]
 
     def _project(self, profile, start_ts, level, scale):
-        """Avanza a passi di STEP_S finche' il livello arriva al 100%. Ritorna il timestamp."""
+        """Steps forward by STEP_S until the level reaches 100%. Returns the timestamp."""
         t = start_ts
         end = start_ts + HORIZON_H * 3600
         while t < end:
-            rate = profile[hour_of_week(t)] * scale  # % all'ora
+            rate = profile[hour_of_week(t)] * scale  # % per hour
             step = rate * STEP_S / 3600
             if level + step >= FULL_PCT:
                 return t + (FULL_PCT - level) / rate * 3600 if rate > 0 else t
@@ -150,7 +150,7 @@ class FillHistory:
         return None
 
     def predict(self, now: float | None = None) -> dict | None:
-        """Quando sara' pieno il cassonetto. None se non ci sono dati sufficienti."""
+        """When the bin will be full. None if there is not enough data."""
         if not self.rows:
             return None
         now = time.time() if now is None else now
@@ -161,7 +161,7 @@ class FillHistory:
 
         profile = self.weekly_profile() if self.span_days() >= PROFILE_MIN_DAYS else None
         if profile is not None:
-            # Scala il profilo sul ciclo in corso: salita osservata / salita attesa dal profilo.
+            # Scale the profile on the current cycle: observed rise / rise expected from the profile.
             scale = 1.0
             cycle_h = (last["ts"] - cycle[0]["ts"]) / 3600
             if cycle_h >= TREND_MIN_H:
@@ -177,7 +177,7 @@ class FillHistory:
             if len(cycle) < 4 or cycle[-1]["ts"] - cycle[0]["ts"] < 2 * 3600:
                 return None
             xs = [(r["ts"] - cycle[0]["ts"]) / 3600 for r in cycle]
-            m, _ = linear_fit(xs, [r["fill_pct"] for r in cycle])  # % all'ora
+            m, _ = linear_fit(xs, [r["fill_pct"] for r in cycle])  # % per hour
             if level >= FULL_PCT:
                 full_at = last["ts"]
             elif m <= 0:
@@ -192,10 +192,10 @@ class FillHistory:
         return result
 
     def stats(self) -> dict:
-        """Statistiche sugli ultimi 30 giorni, utili per pianificare la raccolta."""
+        """Statistics over the last 30 days, useful to plan the collection."""
         emptied = [i for i, r in enumerate(self.rows) if r["event"] == "emptied"]
         before = [self.rows[i - 1]["fill_pct"] for i in emptied if i > 0]
-        # Cicli completi (da uno svuotamento al successivo) che hanno raggiunto il pieno.
+        # Complete cycles (from one emptying to the next) that reached full.
         bounds = [0] + emptied + [len(self.rows)]
         full_cycles = sum(
             1 for a, b in zip(bounds, bounds[1:])
@@ -213,9 +213,9 @@ class FillHistory:
         }
 
     def chart(self, bucket_s: int = 3600) -> list[list]:
-        """Serie per il grafico: l'ultima misura di ogni ora, piu' le due misure a cavallo di
-        ogni svuotamento (cosi' il picco prima della raccolta resta visibile).
-        Ritorna [[ts, fill_pct, peak_pct, emptied], ...]."""
+        """Series for the chart: the last measurement of every hour, plus the two measurements
+        around every emptying (so the peak before the collection stays visible).
+        Returns [[ts, fill_pct, peak_pct, emptied], ...]."""
         rows = self.rows
         out = []
         for i, r in enumerate(rows):
