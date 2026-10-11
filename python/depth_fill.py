@@ -48,6 +48,8 @@ CFG = {
     "auto_floor_grad": 0.2,       # floor = depth changes slower than this share of the walls
     "full_dist_mm": None,         # camera -> "full" level; None = the reference band
     "calib_overlay": "calib_overlay.jpg",  # what the AI found, to check by eye
+    "anchor_tol": 0.15,           # pixel "unchanged" if its brightness differs less than this
+    "anchor_min": 0.03,           # share of unchanged pixels needed for the anchored fit
     "empty_depth": "empty_depth.npy",
     "interval_s": 900,            # one measurement every 15 minutes
     "log": os.path.join("..", "data", "fill_log.csv"),  # shared with main.py / dashboard
@@ -153,6 +155,43 @@ def to_metric(d, rim_mask, tof_distance_mm, fallback=None):
     b = fallback[1]
     a = (1 / z_rim - b) / d_rim
     return 1.0 / np.clip(a * d + b, 1e-6, None), (a, b), False
+
+def unchanged_pixels(img, binm):
+    """Pixels that look as in the calibration photo (the camera is fixed): walls and the floor
+    still uncovered. Their distance is known from empty_depth.npy, so they are anchors."""
+    ref = cv2.imread(CFG["calib_frame"])
+    if ref is None or ref.shape != img.shape:
+        return None
+    def gray(im):
+        return cv2.GaussianBlur(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY).astype(np.float32), (0, 0), 3) + 1
+    ratio = gray(img) / gray(ref)
+    # The phone's auto-exposure changes the overall brightness when bright waste comes in:
+    # normalise on the walls, which stay uncovered the longest
+    walls = ~cv2.dilate(binm.astype(np.uint8), np.ones((31, 31), np.uint8)).astype(bool)
+    ratio /= np.median(ratio[walls])
+    same = (np.abs(ratio - 1) < CFG["anchor_tol"]).astype(np.uint8)
+    return cv2.erode(same, np.ones((7, 7), np.uint8)) > 0
+
+def to_metric_anchored(d, same, empty_z, tof_distance_mm):
+    """Fit 1/Z = a*d + b on all unchanged pixels (known depth from the calibration), dropping the
+    worst 20% at each pass. With a valid ToF the line goes through the ToF point, so the waste
+    under the sensor is exact and the anchors give the slope."""
+    x = d[same].astype(np.float64)
+    y = 1.0 / empty_z[same]
+    pinned = tof_distance_mm > 0
+    if pinned:
+        dt, yt = tof_value(d), 1.0 / tof_distance_mm
+    keep = np.ones(len(x), bool)
+    for _ in range(4):
+        if pinned:
+            dx, dy = x[keep] - dt, y[keep] - yt
+            a = float((dx * dy).sum() / (dx * dx).sum())
+            b = yt - a * dt
+        else:
+            a, b = (float(v) for v in np.polyfit(x[keep], y[keep], 1))
+        r = np.abs(a * x + b - y)
+        keep = r <= np.percentile(r[keep], 80)
+    return 1.0 / np.clip(a * d + b, 1e-6, None), (a, b), pinned
 
 # ---------------------------------------------------------------- calibration state
 def missing_calibration():
@@ -353,7 +392,18 @@ def analyze(img, tracker, tof_distance_mm=None):
     if empty_z.shape != d.shape:                                 # camera resolution changed
         empty_z = cv2.resize(empty_z, (d.shape[1], d.shape[0]), interpolation=cv2.INTER_LINEAR)
     fb = load_fallback()
-    z, ab, tof_used = to_metric(d, rim, tof_distance_mm, fb)
+    # Many anchors (walls and uncovered floor as in the calibration photo) + the ToF; the model
+    # rescales its relative depth on every photo, two anchors alone are not stable enough
+    same = unchanged_pixels(img, binm)
+    anchors = float(same.mean()) if same is not None else 0.0
+    z = None
+    if anchors >= CFG["anchor_min"]:
+        z, ab, tof_used = to_metric_anchored(d, same, empty_z, tof_distance_mm)
+        if ab[0] <= 0:                                           # nonsense slope: fall back
+            z = None
+    if z is None:
+        z, ab, tof_used = to_metric(d, rim, tof_distance_mm, fb)
+        anchors = 0.0
 
     fill_h = np.clip(empty_z - z, 0, CFG["bin_depth_mm"])[binm]
     raw_pct = 100 * float(np.median(fill_h)) / CFG["bin_depth_mm"]   # typical level
@@ -370,6 +420,7 @@ def analyze(img, tracker, tof_distance_mm=None):
         "tof_mm": int(tof_distance_mm),
         "tof_used": tof_used,                     # False = rim-only fallback fit
         "inference_ms": round(infer_ms),
+        "anchors_pct": round(100 * anchors, 1),  # 0 = two-anchor fallback (band + ToF)
     }
 
 # ---------------------------------------------------------------- modes
