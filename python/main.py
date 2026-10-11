@@ -7,6 +7,9 @@
   legge il ToF e stima la profondita' con Depth Anything V2 (depth_fill.py) per ricavare il
   livello di riempimento. Ogni misura finisce in data/fill_log.csv (fill_history.py), da cui
   si prevede quando il cassonetto sara' pieno; livello e previsione vanno sulla dashboard.
+- Cloud: se configurato (data/cloud.json), cloud_sync.py manda letture, misure, eventi e stato all'API
+  su Vercel, che li salva su Supabase per il pannello di controllo. I file locali restano il dataset
+  della scheda e la copia di sicurezza.
 """
 
 import base64
@@ -27,6 +30,7 @@ from arduino.app_bricks.web_ui import WebUI
 from arduino.app_utils import App, Bridge
 
 from baseline_store import BaselineStore
+from cloud_sync import CloudSync
 from fill_history import FillHistory
 from gas_alarm import GasAlarm
 from odor_index import OdorMonitor
@@ -204,6 +208,7 @@ baseline_restored = False
 
 failures = {"aht20": 0, "sgp30": 0}
 faulty = {"aht20": False, "sgp30": False}
+cloud = None                # CloudSync, creato piu' sotto quando lo stato da inviare e' pronto
 
 
 def now_str() -> str:
@@ -230,6 +235,8 @@ def push_event(kind: str, severity: str, title: str, message: str, values: dict 
         events.append(event)
     print(f"[{event['time']}] EVENTO {severity.upper()} {kind}: {title} - {message}")
     ui.send_message("event", event)
+    if cloud:
+        cloud.add_event(event)
     return event
 
 
@@ -322,6 +329,8 @@ def on_sensor_data(uptime_s, aht_ok, sgp_ok, temp_c, rh_pct, tvoc_ppb, eco2_ppm,
     with lock:
         history.append(sample)
         last_sample = sample
+    if cloud:
+        cloud.add_sample(sample)
 
     print(f"[{now_str()}] T={sample['temperature_c']}°C UR={sample['humidity_pct']}% "
           f"TVOC={sample['tvoc_ppb']} ppb eCO2={sample['eco2_ppm']} ppm "
@@ -568,6 +577,8 @@ def vision_step():
         saved = fill_history.append(result["ts"], result["fill_pct"], result["peak_pct"],
                                     "emptied" if result["emptied"] else "")
         status = fill_status()
+    if cloud:
+        cloud.add_fill(result["ts"], result["fill_pct"], result["peak_pct"], result["emptied"])
     print(f"[{now_str()}] Riempimento {result['fill_pct']}% (grezzo {result['raw_fill_pct']}%, "
           f"picchi {result['peak_pct']}%), superficie a {result['surface_mm']} mm, "
           f"bordo a {result['rim_mm']} mm, ToF {'usato' if result['tof_used'] else 'non valido'}, "
@@ -609,6 +620,36 @@ def loop():
 
     time.sleep(1)
 
+
+# --- Cloud (Vercel + Supabase) --------------------------------------------------------------
+def cloud_status() -> dict:
+    """Stato attuale per il pannello di controllo: lo stesso che vede la dashboard locale."""
+    with lock:
+        sample = last_sample
+        alarm_status = alarm.status(sample["tvoc_ppb"] if sample else None)
+    with fill_lock:
+        fill = fill_status(include_chart=False)   # la serie dei 30 giorni la ricostruisce il cloud
+    with odor_lock:
+        odor_status = odor.status()
+    return {"sample": sample, "alarm": alarm_status, "odor": odor_status, "fill": fill,
+            "vision_mode": vision_mode, "sensors": {"aht20": not faulty["aht20"], "sgp30": not faulty["sgp30"]}}
+
+
+def on_cloud_command(command: dict):
+    """Comandi dal pannello di controllo, arrivati con la risposta all'ultimo invio."""
+    if command.get("command") == "mark_emptied":
+        print(f"[{now_str()}] Cloud: il pannello segnala il cassonetto appena svuotato")
+        new_odor_reference("manuale")
+
+
+cloud = CloudSync(DATA_DIR, BIN_ADDRESS, cloud_status, on_cloud_command)
+with fill_lock:
+    queued = cloud.backfill_fill(fill_history.rows)
+if queued:
+    print(f"[{now_str()}] Cloud: {queued} misure di riempimento dal CSV messe in coda")
+cloud.start()
+if not cloud.enabled:
+    cloud = None
 
 print(f"[{now_str()}] Riempimento: {fill_history.last['fill_pct'] if fill_history.last else '—'}%, "
       f"{describe_eta(fill_history.predict())}")

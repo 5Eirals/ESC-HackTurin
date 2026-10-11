@@ -1,0 +1,23 @@
+{
+  "name": "to-breath-cloud",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TO-Breath on Vercel: API that receives the data of the bins and serves the control panel, backed by Supabase.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build-panel.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5",
+    "vitest": "^3"
+  }
+}

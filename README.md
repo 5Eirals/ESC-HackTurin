@@ -2,12 +2,13 @@
 
 **Il cassonetto che respira Torino.** Progetto per hackTurin 2026, challenge **City Signals**.
 
-TO-Breath trasforma un normale cassonetto in un sensore urbano. Sulla Arduino UNO Q, senza cloud, il cassonetto:
+TO-Breath trasforma un normale cassonetto in un sensore urbano. Sulla Arduino UNO Q, in locale (funziona anche senza rete), il cassonetto:
 
 1. **annusa** i gas della decomposizione (SGP30) e misura temperatura e umidità (AHT20): se l'aria dentro il cassonetto cambia in modo anomalo (rifiuti organici in degrado, principio d'incendio) lancia un allarme;
 2. **guarda** dentro di sé con una camera e un modello di stima della profondità (Depth Anything V2), aiutato da un sensore di distanza ToF, e calcola **quanto è pieno**;
 3. **impara** dallo storico dell'ultimo mese a che ritmo si riempie e **prevede quando sarà pieno**;
-4. **avvisa** il centro di controllo (simulato) dell'azienda di raccolta rifiuti e mostra tutto su una **dashboard web**.
+4. **avvisa** il centro di controllo (simulato) dell'azienda di raccolta rifiuti e mostra tutto su una **dashboard web**;
+5. **condivide** i dati con il cloud: un'API su **Vercel** li salva su **Supabase**, e il **pannello di controllo**, anch'esso su Vercel, mostra tutti i cassonetti da qualsiasi luogo.
 
 L'obiettivo è passare dalla raccolta a calendario fisso a una raccolta guidata dai dati: svuotare i cassonetti quando servono, non quando capita.
 
@@ -46,6 +47,21 @@ L'obiettivo è passare dalla raccolta a calendario fisso a una raccolta guidata 
 
 Il microcontrollore fa solo il lavoro "elettrico" (sensori, LED, ToF) e manda i dati grezzi. Tutte le decisioni (allarmi, profondità, previsioni, eventi) le prende l'app Python sul lato Linux.
 
+**Cloud.** Ogni cassonetto, se configurato, invia i suoi dati al cloud; il pannello di controllo li legge da lì:
+
+```
+ UNO Q #1 ─┐  POST /api/ingest ogni 15 s              ┌──────── Vercel (cloud/) ────────┐        ┌──── Supabase ────┐
+ UNO Q #2 ─┼─ (token del cassonetto) ───────────────► │ api/ingest.ts  → ingest_batch()  │ ─────► │ bins             │
+ UNO Q #n ─┘ ◄── comandi del pannello nella risposta   │ api/bins.ts    → panel_bins()    │        │ bin_status       │
+                                                       │ api/bin.ts     → panel_snapshot()│ ◄───── │ readings         │
+ Browser ── https://<progetto>.vercel.app/?key=… ────► │ api/command.ts → panel_command() │        │ fill_measurements│
+            stessa dashboard di assets/                │ public/ = assets/ (pannello)     │        │ bin_events       │
+                                                       └──────────────────────────────────┘        │ bin_commands     │
+                                                                                                    └──────────────────┘
+```
+
+La scheda resta il punto di verità per sé stessa: `data/fill_log.csv` è il suo dataset (previsione, dashboard locale) e la copia di sicurezza; Supabase raccoglie i dati di tutti i cassonetti per il pannello di controllo.
+
 ## Struttura del repository
 
 ```
@@ -64,6 +80,8 @@ ESC-HackTurin/                   (repository di TO-Breath)
 │   ├── depth_fill.py            foto -> profondità -> % di riempimento (Depth Anything V2 + ToF)
 │   ├── fill_history.py          storico del riempimento, previsione del pieno, statistiche
 │   ├── simulate_fill.py         genera un mese di misure inventate per demo e prove
+│   ├── odor_index.py            indice di odore percepito (segnali grezzi SGP30 rispetto al riferimento)
+│   ├── cloud_sync.py            invio dei dati al cloud con coda locale (funziona anche offline)
 │   └── depth_anything_v2_vits_252.onnx   modello di profondità (ViT-S, ingresso 252×252)
 ├── assets/                      dashboard web servita dal brick WebUI
 │   ├── index.html               struttura della pagina (shell, intestazione, bande)
@@ -71,6 +89,13 @@ ESC-HackTurin/                   (repository di TO-Breath)
 │   ├── style.css                impaginazione propria della dashboard
 │   ├── ds/                      design system IAMAimpresa (token e componenti, da non modificare)
 │   └── libs/                    socket.io e client WebUI di Arduino
+├── cloud/                       progetto Vercel (Root Directory = cloud)
+│   ├── api/                     funzioni: ingest.ts (cassonetti), bins.ts, bin.ts, command.ts (pannello), health.ts
+│   ├── lib/                     chiamate a Supabase, risposte HTTP, validazione (zod) e i suoi test
+│   ├── panel/arduino.js         la dashboard in cloud: stessa interfaccia della WebUI, dati dall'API
+│   ├── scripts/build-panel.mjs  build: copia assets/ in public/ e sostituisce libs/arduino.js
+│   └── vercel.json, package.json, .env.example
+├── supabase/migrations/         schema del database (tabelle, funzioni, RLS), da eseguire nel SQL Editor
 ├── AI_Depth_Analysis/           riferimento al repository originale di Depth-Anything-V2
 │                                (non usato a runtime: l'app usa il modello ONNX in python/)
 └── data/                        creata a runtime, non versionata (vedi "File generati")
@@ -173,6 +198,45 @@ Il design system è di IAMAimpresa ed è concesso ai partecipanti solo per l'eve
 
 Gli eventi di riempimento partono una volta per ciclo e si riattivano dopo lo svuotamento.
 
+### 7. Cloud: Vercel + Supabase (`cloud_sync.py`, `cloud/`, `supabase/`)
+
+Il cloud segue il blueprint di [IAMAimpresa Kit](https://github.com/IAMA-impresa/iamaimpresa-kit) (Supabase + Vercel): migrazioni SQL, Row Level Security su ogni tabella, nessuna service role key, input validato con zod, intestazioni di sicurezza.
+
+**Dalla scheda al cloud.** `cloud_sync.py` gira in un thread e ogni 15 s manda a `POST /api/ingest`:
+
+| Cosa | Quanto | Note |
+| :--- | :--- | :--- |
+| `readings` | una riga al minuto | media di gas, temperatura e umidità (la scheda legge ogni secondo), più il TVOC massimo |
+| `fill` | una riga per foto | ogni misura di riempimento; al primo avvio tutto lo storico del CSV (anche simulato) |
+| `events` | uno per evento | con un id unico: reinviarli non crea doppioni |
+| `status` | sostituito a ogni invio | allarme, odore, livello e previsione del pieno, statistiche, ultima lettura, ultimi 10 minuti a passi di 10 s |
+
+Senza rete (o con il cloud giù) tutto resta in coda in `data/cloud_outbox.sqlite` e parte appena torna la connessione, a raffiche da 400 righe; dopo un errore i tentativi si diradano fino a uno ogni 5 minuti. La risposta porta i **comandi** del pannello: «Segna come svuotato» premuto in cloud arriva alla scheda entro ~15 s e fa esattamente quello che fa il pulsante locale.
+
+**Il pannello di controllo** è la stessa dashboard di `assets/`: al build (`cloud/scripts/build-panel.mjs`) Vercel copia `assets/` e sostituisce solo `libs/arduino.js` con `cloud/panel/arduino.js`, che ha la stessa interfaccia della WebUI di Arduino ma legge l'API ogni 10 s. Con più cassonetti compare un menu nell'intestazione; il centro di controllo mostra gli eventi di tutti. "Connesso" vuol dire che il cassonetto ha parlato con il cloud negli ultimi 2 minuti.
+
+**Dove stanno i dati**
+
+| Dato | Sulla scheda | Su Supabase |
+| :--- | :--- | :--- |
+| Misure di riempimento | `data/fill_log.csv` (30 giorni in uso, file completo) | `fill_measurements`, tutte |
+| Gas, temperatura, umidità | ultimi 10 minuti in memoria, a 1 Hz | `readings`, una riga al minuto, tutte |
+| Eventi | ultimi 100 in memoria | `bin_events`, tutti |
+| Previsione, statistiche, odore, allarme | calcolati dalla scheda | `bin_status`, l'ultimo stato |
+| Baseline SGP30, riferimento d'odore, calibrazione | `data/`, `python/` | — |
+
+**Sicurezza.** Nessuno legge o scrive le tabelle direttamente (RLS attiva, nessun permesso al ruolo anonimo). L'API chiama quattro funzioni del database con la chiave *publishable*, e ognuna controlla il proprio segreto:
+
+| Endpoint | Chi | Autorizzazione | Funzione |
+| :--- | :--- | :--- | :--- |
+| `POST /api/ingest` | cassonetto | `Bearer <token del cassonetto>` | `ingest_batch` |
+| `GET /api/bins` | pannello | `Bearer <chiave del pannello>` | `panel_bins` |
+| `GET /api/bin?code=TO-0001` | pannello | `Bearer <chiave del pannello>` | `panel_snapshot` |
+| `POST /api/command?code=TO-0001` | pannello | `Bearer <chiave del pannello>` | `panel_command` |
+| `GET /api/health` | chiunque | — | configurazione presente |
+
+Token e chiavi sono casuali, si vedono una volta sola e nel database c'è solo il loro sha256. Un cassonetto può scrivere solo i propri dati. Se il database ha anche lo schema del kit, gli utenti con la funzione `bins` possono leggere le tabelle direttamente (RLS con `has_access`).
+
 ---
 
 ## Messaggi
@@ -208,6 +272,24 @@ Gli eventi di riempimento partono una volta per ciclo e si riattivano dopo lo sv
 4. **Dashboard:** `http://<ip-della-uno-q>:7000`.
 5. **Prova gas:** nei primi ~15 s l'SGP30 è in riscaldamento, nei 2 minuti successivi l'allarme impara il valore a riposo. Avvicinando un pennarello all'alcol al sensore, dopo ~10 s compare `GAS_ALERT`.
 
+### Cloud: Vercel + Supabase (una volta)
+
+1. **Supabase.** Creare un progetto su [supabase.com](https://supabase.com) (va bene anche quello del kit). In *SQL Editor* eseguire `supabase/migrations/20261011120000_to_breath_cloud.sql`. Poi, sempre nel SQL Editor, registrare i cassonetti e creare la chiave del pannello (ogni comando mostra il segreto una volta sola):
+   ```sql
+   select public.register_bin('TO-0001', 'Via Vincenzo Vela 17, Torino');   -- token del cassonetto
+   select public.create_panel_key('Centro di controllo');                   -- chiave del pannello
+   ```
+   Il codice deve essere lo stesso di `BIN_ID` in `python/main.py`. Rieseguire `register_bin` dà un token nuovo (il vecchio smette di funzionare); una chiave si revoca con `update public.panel_keys set revoked_at = now() where name = '…'`.
+2. **Vercel.** Importare il repository su [vercel.com](https://vercel.com) con **Root Directory = `cloud`** (lasciare attivo «Include files outside the root directory»: il build copia `assets/`). Variabili d'ambiente: `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` (da *Project Settings → API Keys*; vanno bene anche i nomi `NEXT_PUBLIC_…` del kit). Dopo il deploy, `https://<progetto>.vercel.app/api/health` deve rispondere `{"ok":true}`.
+3. **Scheda.** Creare sulla UNO Q il file `data/cloud.json` (non finisce su git):
+   ```json
+   {"url": "https://<progetto>.vercel.app", "token": "tbd_..."}
+   ```
+   oppure impostare `TOBREATH_CLOUD_URL` e `TOBREATH_DEVICE_TOKEN`. Al riavvio il log dice `Cloud: invio a … ogni 15 s`. Senza configurazione la scheda funziona come prima, solo in locale.
+4. **Pannello.** Aprire `https://<progetto>.vercel.app/?key=tbp_...` (la chiave resta nel browser e sparisce dall'indirizzo); `&bin=TO-0002` apre un cassonetto preciso.
+
+Per provare l'API in locale: `cd cloud && npm install && npx vercel dev` (con `.env.local` copiato da `.env.example`); `npm test` e `npm run typecheck` controllano validazione e tipi.
+
 ### Calibrazione della visione (una volta per cassonetto)
 
 1. Avviare in `snapshot` (o in `run`: se mancano le maschere il fotogramma viene salvato comunque) e aprire `python/calib_frame.jpg`.
@@ -228,6 +310,8 @@ Gli eventi di riempimento partono una volta per ciclo e si riattivano dopo lo sv
 | `python/depth_fill.py` | `CFG`: `rim_dist_mm`, `bin_depth_mm`, `tof_px`, `emptied_drop_pct` | misure del cassonetto |
 | `python/fill_history.py` | `WINDOW_DAYS`, `PROFILE_MIN_DAYS`, `TREND_CLAMP` | 30 g, 7 g, 0,5-2× |
 | `python/gas_alarm.py` | `GasAlarm(...)`: rapporto, delta minimo, tempi di conferma | 3×, 100 ppb, 10 s / 1,5×, 30 s |
+| `python/cloud_sync.py` | `SYNC_INTERVAL_S`, `MAX_ROWS_PER_BATCH`, `MAX_OUTBOX_ROWS` | 15 s, 400 righe, 100 000 righe |
+| `cloud/panel/arduino.js` | `POLL_MS` (aggiornamento del pannello) | 10 s |
 
 Il criterio definitivo dell'allarme gas è ancora da decidere: i valori attuali sono un punto di partenza da tarare sul campo.
 
@@ -241,5 +325,7 @@ Il criterio definitivo dell'allarme gas è ancora da decidere: i valori attuali 
 | `python/calib_frame.jpg` | fotogramma su cui disegnare le maschere |
 | `python/empty_depth.npy`, `python/calib_ab.json` | calibrazione a vuoto |
 | `python/bin_mask.png`, `python/rim_mask.png` | maschere disegnate a mano |
+| `data/cloud.json` | indirizzo del cloud e token del cassonetto (segreto) |
+| `data/cloud_outbox.sqlite` | coda dei dati non ancora inviati al cloud |
 
 `data/` e `last_frame.jpg` non sono versionati (`.gitignore`).
