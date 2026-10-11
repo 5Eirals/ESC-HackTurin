@@ -406,7 +406,7 @@ def analyze(img, tracker, tof_distance_mm=None):
         anchors = 0.0
 
     fill_h = np.clip(empty_z - z, 0, CFG["bin_depth_mm"])[binm]
-    raw_pct = 100 * float(np.median(fill_h)) / CFG["bin_depth_mm"]   # typical level
+    raw_pct = 100 * float(np.mean(fill_h)) / CFG["bin_depth_mm"]     # volume: mean height over the floor
     peak_pct = 100 * float(np.percentile(fill_h, 90)) / CFG["bin_depth_mm"]  # heaps
     fill_pct, emptied = tracker.update(round(raw_pct, 1))
     return {

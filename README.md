@@ -151,7 +151,7 @@ Ogni 5 minuti `main.py`:
 
    Se il ToF non è valido, o il cassonetto è così pieno che le due ancore sono troppo vicine, riusa lo spostamento `b` della calibrazione e ricalcola solo la scala sulla fascia;
 5. confronta la profondità attuale con quella del **cassonetto vuoto** (`empty_depth.npy`) dentro `bin_mask.png`: l'altezza dei rifiuti è `profondità a vuoto − profondità attuale`, da cui:
-   - **riempimento** = mediana delle altezze / profondità del cassonetto (livello tipico);
+   - **riempimento** = media delle altezze sul fondo / altezza di pieno (cioè il volume occupato);
    - **picchi** = 90° percentile (cumuli di sacchi);
    - **filtro**: mediana delle ultime 3 misure;
    - **svuotamento**: un calo di più del 30% rispetto alla misura precedente.
