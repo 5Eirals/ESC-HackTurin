@@ -16,6 +16,7 @@ import base64
 import http.client
 import json
 import os
+import re
 import ssl
 import sys
 import threading
@@ -130,8 +131,9 @@ camera_id = None   # obiettivo scelto al primo scatto (pick_camera)
 
 
 def pick_camera():
-    """Camera da usare: CAMERA se fissata, altrimenti la posteriore con lo zoom minimo piu'
-    basso in /info.json (sotto 1.0x = ultra-grandangolo)."""
+    """Camera da usare: CAMERA se fissata, altrimenti la posteriore piu' grandangolare di
+    /info.json: focale piu' corta nel nome ("Back Lens 2 (1.4mm)"), poi zoom minimo piu' basso
+    (molti telefoni riportano 1.0x per tutte le camere)."""
     if CAMERA != "auto":
         return CAMERA
     try:
@@ -141,6 +143,10 @@ def pick_camera():
     except Exception as e:
         print(f"[{now_str()}] Telefono: elenco camere non disponibile ({e}), uso 'back'")
         return "back"
+
+    def focal_mm(c):
+        found = re.findall(r"([0-9]+(?:\.[0-9]+)?)mm", str(c.get("label", "")))
+        return min(float(f) for f in found) if found else float("inf")
 
     def min_zoom(c):
         try:
@@ -154,7 +160,7 @@ def pick_camera():
     back = [c for c in cameras if c.get("facing") == "back"]
     if not back:
         return "back"
-    best = min(back, key=min_zoom)
+    best = min(back, key=lambda c: (focal_mm(c), min_zoom(c)))
     print(f"[{now_str()}] Telefono: uso la camera {best.get('id')} ({best.get('label')})")
     return str(best.get("id"))
 
