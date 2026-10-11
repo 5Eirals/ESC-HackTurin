@@ -14,6 +14,7 @@
 
 import base64
 import http.client
+import json
 import os
 import ssl
 import sys
@@ -122,9 +123,42 @@ def request(path, timeout=5):
     return conn, r
 
 
+camera_id = None   # obiettivo scelto al primo scatto (pick_camera)
+
+
+def pick_camera():
+    """Camera da usare: CAMERA se fissata, altrimenti la posteriore con lo zoom minimo piu'
+    basso in /info.json (sotto 1.0x = ultra-grandangolo)."""
+    if CAMERA != "auto":
+        return CAMERA
+    try:
+        conn, r = request("/info.json")
+        cameras = json.loads(r.read()).get("cameras", [])
+        conn.close()
+    except Exception as e:
+        print(f"[{now_str()}] Telefono: elenco camere non disponibile ({e}), uso 'back'")
+        return "back"
+
+    def min_zoom(c):
+        try:
+            return float((c.get("zoom") or {}).get("min"))
+        except (TypeError, ValueError):
+            return 1.0
+
+    for c in cameras:
+        print(f"[{now_str()}] Telefono: camera {c.get('id')} {c.get('facing')} '{c.get('label')}' "
+              f"zoom min {(c.get('zoom') or {}).get('min')}")
+    back = [c for c in cameras if c.get("facing") == "back"]
+    if not back:
+        return "back"
+    best = min(back, key=min_zoom)
+    print(f"[{now_str()}] Telefono: uso la camera {best.get('id')} ({best.get('label')})")
+    return str(best.get("id"))
+
+
 def phone_snapshot():
     # L'app puo' metterci fino a 14 s (riapre la camera, riprova): 5 s non bastano
-    conn, r = request("/video/snapshot?camera=back", timeout=SNAPSHOT_TIMEOUT_S)
+    conn, r = request(f"/video/snapshot?camera={camera_id or 'back'}", timeout=SNAPSHOT_TIMEOUT_S)
     try:
         return r.read()
     finally:
@@ -549,6 +583,10 @@ def phone_torch(on):
 def take_photo():
     """Scatta con la torcia del telefono accesa e legge il ToF nello stesso momento.
     Ritorna (jpeg, tof_mm) oppure (None, tof_mm) se la camera non risponde."""
+    global camera_id
+    if camera_id is None:
+        camera_id = pick_camera()
+        phone_command("camera", camera_id)   # obiettivo attivo, cosi' le impostazioni valgono per lui
     # Foto alla risoluzione dello stream: al massimo (12 MP) lo scatto e' lento e il modello
     # la riduce comunque a 640 px
     phone_command("snapshot_res", "stream")
