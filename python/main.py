@@ -69,6 +69,9 @@ PHONE_IP = "192.168.22.74"
 PORT = 4444
 USE_HTTPS = True
 USER, PASSWORD = "ESCam67", "ESCamotage420"   # login dell'app IP camera
+# Obiettivo: "auto" = la camera posteriore piu' grandangolare (serve vedere le pareti per la
+# calibrazione), oppure un id di /info.json come "0" o "0:2" (l'elenco e' stampato al primo scatto)
+CAMERA = "auto"
 
 SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_frame.jpg")
 
