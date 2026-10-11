@@ -96,7 +96,7 @@ ESC-HackTurin/                   (repository di TO-Breath)
 │   ├── scripts/build-panel.mjs  build: copia assets/ in public/ e sostituisce libs/arduino.js
 │   └── vercel.json, package.json, .env.example
 ├── supabase/
-│   ├── migrations/              schema del database (tabelle, funzioni, RLS), da eseguire nel SQL Editor
+│   ├── migrations/              schema del database in 5 file da eseguire in ordine nel SQL Editor
 │   ├── reset_to_breath.sql      cancella le tabelle di TO-Breathe per ripartire da zero (es. dopo un tentativo a metà)
 │   └── optional/kit_access.sql  solo con lo schema del kit: lettura delle tabelle per gli utenti con la funzione `bins`
 ├── AI_Depth_Analysis/           riferimento al repository originale di Depth-Anything-V2
@@ -279,7 +279,7 @@ La migrazione è scritta per funzionare con qualsiasi client SQL: ogni funzione 
 
 ### Cloud: Vercel + Supabase (una volta)
 
-1. **Supabase.** Creare un progetto su [supabase.com](https://supabase.com) (va bene anche quello del kit). In *SQL Editor*, in una nuova query, incollare ed eseguire `supabase/reset_to_breath.sql` (toglie quello che un tentativo precedente può aver lasciato; su un database nuovo non fa nulla), poi in un'altra query `supabase/migrations/20261011120000_to_breath_cloud.sql`. Se il progetto ha anche lo schema del kit, eseguire infine `supabase/optional/kit_access.sql`. Poi, sempre nel SQL Editor, registrare i cassonetti e creare la chiave del pannello (ogni comando mostra il segreto una volta sola):
+1. **Supabase.** Creare un progetto su [supabase.com](https://supabase.com) (va bene anche quello del kit). In *SQL Editor*, in una nuova query, incollare ed eseguire `supabase/reset_to_breath.sql` (toglie quello che un tentativo precedente può aver lasciato; su un database nuovo non fa nulla), poi i cinque file di `supabase/migrations/` in ordine (`…_1_tables.sql`, `…_2_tokens.sql`, `…_3_ingest.sql`, `…_4_panel.sql`, `…_5_privileges.sql`), ciascuno in una query nuova: sono divisi perché il SQL Editor accetta incolla di circa 150 righe alla volta. Se il progetto ha anche lo schema del kit, eseguire infine `supabase/optional/kit_access.sql`. Poi, sempre nel SQL Editor, registrare i cassonetti e creare la chiave del pannello (ogni comando mostra il segreto una volta sola):
    ```sql
    select public.register_bin('TO-0001', 'Via Vincenzo Vela 17, Torino');   -- token del cassonetto
    select public.create_panel_key('Centro di controllo');                   -- chiave del pannello
