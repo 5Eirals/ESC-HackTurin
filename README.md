@@ -68,13 +68,23 @@ La scheda resta il punto di verità per sé stessa: `data/fill_log.csv` è il su
 ESC-HackTurin/                   (repository di TO-Breath)
 ├── app.yaml                     configurazione dell'app Arduino App Lab (nome, brick web_ui)
 ├── sketch/                      firmware del microcontrollore
-│   ├── sketch.ino               loop a 1 Hz, invio dati via Bridge, flash LED, lettura ToF
+│   ├── sketch.ino               setup() e loop() a 1 Hz, funzioni esposte a Python via Bridge
+│   ├── gas_sensors.h / .cpp     AHT20 + SGP30: avvio, letture, invio dati e baseline a Python
+│   ├── vision_io.h / .cpp       anello LED (flash), Modulino Distance (ToF), esito degli scatti
 │   ├── aht20.h / aht20.cpp      driver minimale AHT20 (solo Wire, controllo CRC)
 │   ├── sgp30.h / sgp30.cpp      driver minimale SGP30 (IAQ, segnali grezzi, baseline, umidità)
 │   ├── sensirion_crc.h          CRC-8 Sensirion
 │   └── sketch.yaml              piattaforma e librerie (RouterBridge, Modulino, NeoPixel)
 ├── python/                      app Linux
-│   ├── main.py                  punto d'ingresso: callback del Bridge, loop, eventi, dashboard
+│   ├── main.py                  punto d'ingresso: avvio dei moduli e loop principale
+│   ├── config.py                impostazioni da modificare a mano (cassonetto, visione, camera, soglie, demo)
+│   ├── state.py                 stato condiviso tra i moduli (WebUI, letture, eventi, odore, cloud)
+│   ├── common.py                piccole funzioni comuni (orario dei log, chiamata sicura allo sketch)
+│   ├── gas_sensors.py           callback del Bridge, salute dei sensori, allarme gas, odore, baseline SGP30
+│   ├── events.py                eventi per il centro di controllo
+│   ├── phone_camera.py          telefono usato come camera (richieste, obiettivo, scatto, torcia)
+│   ├── vision.py                foto + ToF, analisi di profondità, storico, previsione, eventi di riempimento
+│   ├── panels.py                dashboard locale e pannello di controllo in cloud
 │   ├── gas_alarm.py             allarme gas relativo al valore "a riposo"
 │   ├── baseline_store.py        salvataggio/ripristino della baseline SGP30
 │   ├── depth_fill.py            foto -> profondità -> % di riempimento (Depth Anything V2 + ToF)
@@ -108,7 +118,7 @@ ESC-HackTurin/                   (repository di TO-Breath)
 
 ## Come funziona
 
-### 1. Microcontrollore (`sketch/sketch.ino`)
+### 1. Microcontrollore (`sketch/`)
 
 - All'avvio scansiona il bus I2C (nel Monitor devono comparire `0x38` e `0x58`), inizializza AHT20, SGP30, Modulino Distance e l'anello LED.
 - **Ogni secondo** legge l'AHT20, passa l'umidità assoluta all'SGP30 (compensazione), legge TVOC/eCO₂ e i segnali grezzi H₂/etanolo e invia tutto a Python con `sensor_data`.
@@ -116,14 +126,14 @@ ESC-HackTurin/                   (repository di TO-Breath)
 - Se un sensore fallisce 5 letture di fila viene reinizializzato; se manca, si riprova ogni 5 s.
 - Espone a Python `set_flash` (luminosità dell'anello), `read_tof` (mediana di 5 letture) e `sgp30_set_baseline`. Le funzioni che usano l'I2C girano nel thread del loop (`provide_safe`), così non si sovrappongono alle letture dei sensori.
 
-### 2. App Python (`python/main.py`)
+### 2. App Python (`python/main.py` e moduli)
 
 L'app ha due flussi che girano in parallelo:
 
 - **Callback del Bridge** (dati gas, ogni secondo): aggiornano l'allarme gas, controllano la salute dei sensori, inviano le letture alla dashboard.
 - **Loop principale** (`App.run`): al primo giro ripristina la baseline SGP30 salvata, poi **ogni `CAPTURE_INTERVAL_S` (5 min)** esegue la parte di visione: foto, profondità, riempimento, storico, previsione, eventi.
 
-Le chiamate verso lo sketch si fanno solo dal loop, mai dentro le callback del Bridge.
+Le chiamate verso lo sketch si fanno solo dal loop, mai dentro le callback del Bridge. `main.py` avvia i moduli e contiene solo il loop; le impostazioni stanno in `config.py`.
 
 ### 3. Gas: allarme relativo (`gas_alarm.py`, `baseline_store.py`)
 
@@ -140,7 +150,7 @@ Se un sensore non risponde per 3 letture di fila parte **`SENSOR_FAULT`**; quand
 
 ### 4. Visione: dalla foto al livello di riempimento (`depth_fill.py`)
 
-Ogni 5 minuti `main.py`:
+Ogni 5 minuti `vision.py`:
 
 1. accende l'anello LED, aspetta 1 s che l'esposizione del telefono si adatti, **scatta una foto** (`/video/snapshot`, oppure il primo fotogramma dello stream MJPEG) e spegne il LED;
 2. **legge il ToF** nello stesso momento;
@@ -156,7 +166,7 @@ Ogni 5 minuti `main.py`:
    - **filtro**: mediana delle ultime 3 misure;
    - **svuotamento**: un calo di più del 30% rispetto alla misura precedente.
 
-La modalità della visione si sceglie con `VISION_MODE` in `main.py`, oppure con un argomento (`python main.py calibrate`), la variabile d'ambiente `MODE` o un file `python/mode.txt`:
+La modalità della visione si sceglie con `VISION_MODE` in `config.py`, oppure con un argomento (`python main.py calibrate`), la variabile d'ambiente `MODE` o un file `python/mode.txt`:
 
 | Modalità | Cosa fa |
 | :--- | :--- |
@@ -283,7 +293,7 @@ La migrazione è scritta per funzionare con qualsiasi client SQL: ogni funzione 
 ## Installazione e avvio
 
 1. **Collegamenti:** Grove Base Shield sulla UNO Q con **VCC a 3,3 V**; SGP30 e AHT20 su due porte I2C; Modulino Distance sul Qwiic; anello LED su D6.
-2. **Camera:** installare IP Webcam (o simile) sul telefono, fissarlo sopra il cassonetto puntato verso il fondo e impostare `PHONE_IP`, `PORT` e `USE_HTTPS` in `python/main.py`.
+2. **Camera:** installare IP Webcam (o simile) sul telefono, fissarlo sopra il cassonetto puntato verso il fondo e impostare `PHONE_IP`, `PORT` e `USE_HTTPS` in `python/config.py`.
 3. **Avvio:** aprire la cartella in **Arduino App Lab** e premere Run. Lo sketch usa `Arduino_RouterBridge`, `Arduino_Modulino` e `Adafruit NeoPixel` (elencate in `sketch.yaml`); la visione richiede in Python `onnxruntime`, `opencv-python-headless` e `numpy`.
 4. **Dashboard:** `http://<ip-della-uno-q>:7000`.
 5. **Prova gas:** nei primi ~15 s l'SGP30 è in riscaldamento, nei 2 minuti successivi l'allarme impara il valore a riposo. Avvicinando un pennarello all'alcol al sensore, dopo ~10 s compare `GAS_ALERT`.
@@ -295,7 +305,7 @@ La migrazione è scritta per funzionare con qualsiasi client SQL: ogni funzione 
    select public.register_bin('TO-0001', 'Via Vincenzo Vela 17, Torino');   -- token del cassonetto
    select public.create_panel_key('Centro di controllo');                   -- chiave del pannello
    ```
-   Il codice deve essere lo stesso di `BIN_ID` in `python/main.py`. Rieseguire `register_bin` dà un token nuovo (il vecchio smette di funzionare); una chiave si revoca con `update public.panel_keys set revoked_at = now() where name = '…'`.
+   Il codice deve essere lo stesso di `BIN_ID` in `python/config.py`. Rieseguire `register_bin` dà un token nuovo (il vecchio smette di funzionare); una chiave si revoca con `update public.panel_keys set revoked_at = now() where name = '…'`.
 2. **Vercel.** Importare il repository su [vercel.com](https://vercel.com) con **Root Directory = `cloud`** (lasciare attivo «Include files outside the root directory»: il build copia `assets/`). Variabili d'ambiente: `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` (da *Project Settings → API Keys*; vanno bene anche i nomi `NEXT_PUBLIC_…` del kit). Dopo il deploy, `https://<progetto>.vercel.app/api/health` deve rispondere `{"ok":true}`.
 3. **Scheda.** Creare sulla UNO Q il file `data/cloud.json` (non finisce su git):
    ```json
@@ -319,11 +329,11 @@ Calibrazione a mano, se serve: `CFG["auto_calibration"] = False`, avviare in `sn
 
 | Dove | Parametro | Default |
 | :--- | :--- | :--- |
-| `python/main.py` | `BIN_ID`, `BIN_ADDRESS` | `TO-0001`, Via Vincenzo Vela 17 |
-| `python/main.py` | `VISION_MODE`, `CAPTURE_INTERVAL_S` | `run`, 300 s |
-| `python/main.py` | `FILL_WARN_PCT`, `FILL_FULL_PCT` | 80%, 95% |
-| `python/main.py` | `SIMULATED_HISTORY` | `True` (demo) |
-| `python/main.py` | `PHONE_IP`, `PORT`, `USE_HTTPS`, `FLASH_LEVEL`, `FLASH_SETTLE_S` | camera e flash |
+| `python/config.py` | `BIN_ID`, `BIN_ADDRESS` | `TO-0001`, Via Vincenzo Vela 17 |
+| `python/config.py` | `VISION_MODE`, `CAPTURE_INTERVAL_S` | `run`, 300 s |
+| `python/config.py` | `FILL_WARN_PCT`, `FILL_FULL_PCT` | 80%, 95% |
+| `python/config.py` | `SIMULATED_HISTORY` | `True` (demo) |
+| `python/config.py` | `PHONE_IP`, `PORT`, `USE_HTTPS`, `FLASH_LEVEL`, `FLASH_SETTLE_S` | camera e flash |
 | `python/depth_fill.py` | `CFG`: `auto_calibration`, `full_dist_mm`, `tof_px`, `emptied_drop_pct` | autocalibrazione attiva, pieno al livello della fascia, centro della foto, 30% |
 | `python/depth_fill.py` | `CFG`: `rim_dist_mm`, `bin_depth_mm` | solo per la calibrazione a mano (l'autocalibrazione li sovrascrive) |
 | `python/fill_history.py` | `WINDOW_DAYS`, `PROFILE_MIN_DAYS`, `TREND_CLAMP` | 30 g, 7 g, 0,5-2× |
