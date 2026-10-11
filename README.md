@@ -95,7 +95,10 @@ ESC-HackTurin/                   (repository di TO-Breath)
 │   ├── panel/arduino.js         la dashboard in cloud: stessa interfaccia della WebUI, dati dall'API
 │   ├── scripts/build-panel.mjs  build: copia assets/ in public/ e sostituisce libs/arduino.js
 │   └── vercel.json, package.json, .env.example
-├── supabase/migrations/         schema del database (tabelle, funzioni, RLS), da eseguire nel SQL Editor
+├── supabase/
+│   ├── migrations/              schema del database (tabelle, funzioni, RLS), da eseguire nel SQL Editor
+│   ├── reset_to_breath.sql      cancella le tabelle di TO-Breath per ripartire da zero (es. dopo un tentativo a metà)
+│   └── optional/kit_access.sql  solo con lo schema del kit: lettura delle tabelle per gli utenti con la funzione `bins`
 ├── AI_Depth_Analysis/           riferimento al repository originale di Depth-Anything-V2
 │                                (non usato a runtime: l'app usa il modello ONNX in python/)
 └── data/                        creata a runtime, non versionata (vedi "File generati")
@@ -235,7 +238,9 @@ Senza rete (o con il cloud giù) tutto resta in coda in `data/cloud_outbox.sqlit
 | `POST /api/command?code=TO-0001` | pannello | `Bearer <chiave del pannello>` | `panel_command` |
 | `GET /api/health` | chiunque | — | configurazione presente |
 
-Token e chiavi sono casuali, si vedono una volta sola e nel database c'è solo il loro sha256. Un cassonetto può scrivere solo i propri dati. Se il database ha anche lo schema del kit, gli utenti con la funzione `bins` possono leggere le tabelle direttamente (RLS con `has_access`).
+Token e chiavi sono casuali, si vedono una volta sola e nel database c'è solo il loro sha256. Un cassonetto può scrivere solo i propri dati. Se il database ha anche lo schema del kit, `supabase/optional/kit_access.sql` permette agli utenti con la funzione `bins` di leggere le tabelle direttamente (RLS con `has_access`).
+
+La migrazione è scritta per funzionare con qualsiasi client SQL: ogni funzione è una sola istruzione SQL (nessun `;` dentro i corpi `$$ … $$`, che alcuni editor spezzano), niente blocchi `DO`, niente tipi enum, e ogni istruzione si può rieseguire senza errori.
 
 ---
 
@@ -274,7 +279,7 @@ Token e chiavi sono casuali, si vedono una volta sola e nel database c'è solo i
 
 ### Cloud: Vercel + Supabase (una volta)
 
-1. **Supabase.** Creare un progetto su [supabase.com](https://supabase.com) (va bene anche quello del kit). In *SQL Editor* eseguire `supabase/migrations/20261011120000_to_breath_cloud.sql`. Poi, sempre nel SQL Editor, registrare i cassonetti e creare la chiave del pannello (ogni comando mostra il segreto una volta sola):
+1. **Supabase.** Creare un progetto su [supabase.com](https://supabase.com) (va bene anche quello del kit). In *SQL Editor*, in una nuova query, incollare ed eseguire `supabase/reset_to_breath.sql` (toglie quello che un tentativo precedente può aver lasciato; su un database nuovo non fa nulla), poi in un'altra query `supabase/migrations/20261011120000_to_breath_cloud.sql`. Se il progetto ha anche lo schema del kit, eseguire infine `supabase/optional/kit_access.sql`. Poi, sempre nel SQL Editor, registrare i cassonetti e creare la chiave del pannello (ogni comando mostra il segreto una volta sola):
    ```sql
    select public.register_bin('TO-0001', 'Via Vincenzo Vela 17, Torino');   -- token del cassonetto
    select public.create_panel_key('Centro di controllo');                   -- chiave del pannello

@@ -1,33 +1,25 @@
 -- TO-Breath cloud: what the bins (Arduino UNO Q) send and what the control panel reads.
 --
--- Nobody touches these tables directly. Bins and the control panel go through the Vercel API, which calls
--- the security definer functions below with the publishable key:
---   ingest_batch(device_token, batch)     a bin sends readings, fill measurements, events and its status
---   panel_bins(panel_key)                 the control panel lists the bins
---   panel_snapshot(panel_key, bin_code)   the control panel reads one bin (same shape as the board's dashboard)
---   panel_command(panel_key, bin_code, …) the control panel asks a bin to do something (e.g. "just emptied")
--- Tokens are random, shown once and stored only as sha256. Admins create them from the SQL editor:
---   select public.register_bin('TO-0001', 'Via Vincenzo Vela 17, Torino');   -- device token
---   select public.create_panel_key('Centro di controllo');                   -- control panel key
+-- Nobody touches these tables directly. Bins and the control panel go through the Vercel API, which
+-- calls the security definer functions below with the publishable key:
+--   ingest_batch(device_token, batch)       a bin sends readings, fill measurements, events, status
+--   panel_bins(panel_key)                   the control panel lists the bins
+--   panel_snapshot(panel_key, bin_code)     the control panel reads one bin
+--   panel_command(panel_key, bin_code, cmd) the control panel asks a bin to act (mark_emptied)
+-- Tokens are random, shown once and stored only as sha256. Admins create them from the SQL Editor
+-- with public.register_bin(code, address) and public.create_panel_key(name), see the README.
 --
--- Works on its own or next to the IAMAimpresa kit schema: when public.has_access() exists, signed-in users
--- with the 'bins' feature can also read the tables directly (RLS).
+-- Written to survive any SQL client: every function is one SQL statement (no semicolons inside a
+-- body), no DO blocks, no enum types, and every statement can be run again without errors.
+-- Signed-in users of the IAMAimpresa kit can also read the tables: see supabase/optional/kit_access.sql
 
 create extension if not exists pgcrypto with schema extensions;
 
 -- ---------------------------------------------------------------------------
--- 1. Types
+-- 1. Tables
 -- ---------------------------------------------------------------------------
 
-create type public.bin_event_severity as enum ('info', 'warning', 'critical');
-create type public.fill_source as enum ('camera', 'sim');
-create type public.bin_command_kind as enum ('mark_emptied');
-
--- ---------------------------------------------------------------------------
--- 2. Tables
--- ---------------------------------------------------------------------------
-
-create table public.bins (
+create table if not exists public.bins (
   id uuid primary key default gen_random_uuid(),
   code text not null unique check (code ~ '^[A-Z0-9][A-Z0-9-]{1,31}$'),
   address text not null default '' check (length(address) <= 200),
@@ -39,7 +31,7 @@ create table public.bins (
 comment on table public.bins is
   'One row per bin (one Arduino UNO Q each). The board authenticates with the token whose sha256 is token_hash.';
 
-create table public.bin_status (
+create table if not exists public.bin_status (
   bin_id uuid primary key references public.bins (id) on delete cascade,
   state jsonb not null default '{}'::jsonb,
   reported_at timestamptz not null default now(),
@@ -49,7 +41,7 @@ create table public.bin_status (
 comment on table public.bin_status is
   'Latest state reported by each bin (gas alarm, odour, fill prediction and statistics, last readings), replaced at every sync.';
 
-create table public.readings (
+create table if not exists public.readings (
   id uuid primary key default gen_random_uuid(),
   bin_id uuid not null references public.bins (id) on delete cascade,
   minute_at timestamptz not null,
@@ -67,47 +59,47 @@ create table public.readings (
 comment on table public.readings is
   'Gas, temperature and humidity averaged per minute (the board reads every second and keeps the raw data).';
 
-create table public.fill_measurements (
+create table if not exists public.fill_measurements (
   id uuid primary key default gen_random_uuid(),
   bin_id uuid not null references public.bins (id) on delete cascade,
   measured_at timestamptz not null,
   fill_pct real not null check (fill_pct between 0 and 100),
   peak_pct real not null check (peak_pct between 0 and 100),
   is_emptied boolean not null default false,
-  source public.fill_source not null default 'camera',
+  source text not null default 'camera' check (source in ('camera', 'sim')),
   created_at timestamptz not null default now(),
   unique (bin_id, measured_at)
 );
 comment on table public.fill_measurements is
   'Fill level of a bin from the camera and depth model, one row per photo (copy of data/fill_log.csv on the board).';
 
-create table public.bin_events (
+create table if not exists public.bin_events (
   id uuid primary key default gen_random_uuid(),
   bin_id uuid not null references public.bins (id) on delete cascade,
   device_event_id text not null check (length(device_event_id) between 1 and 64),
   occurred_at timestamptz not null,
   type text not null check (type ~ '^[A-Z][A-Z_]{1,39}$'),
-  severity public.bin_event_severity not null,
+  severity text not null check (severity in ('info', 'warning', 'critical')),
   title text not null check (length(trim(title)) between 1 and 200),
   message text not null default '' check (length(message) <= 1000),
-  "values" jsonb not null default '{}'::jsonb,
+  details jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   unique (bin_id, device_event_id)
 );
 comment on table public.bin_events is
   'Events a bin raised for the control centre (gas alarm, almost full, emptied, odour, sensor faults).';
 
-create table public.bin_commands (
+create table if not exists public.bin_commands (
   id uuid primary key default gen_random_uuid(),
   bin_id uuid not null references public.bins (id) on delete cascade,
-  command public.bin_command_kind not null,
+  command text not null check (command in ('mark_emptied')),
   delivered_at timestamptz,
   created_at timestamptz not null default now()
 );
 comment on table public.bin_commands is
-  'Requests from the control panel to a bin; handed to the bin in the answer to its next sync.';
+  'Requests from the control panel to a bin, handed to the bin in the answer to its next sync.';
 
-create table public.panel_keys (
+create table if not exists public.panel_keys (
   id uuid primary key default gen_random_uuid(),
   name text not null check (length(trim(name)) between 1 and 80),
   key_hash bytea not null unique,
@@ -117,35 +109,14 @@ create table public.panel_keys (
 comment on table public.panel_keys is
   'Keys that open the control panel (stored as sha256). Revoke one by setting revoked_at.';
 
-create index readings_bin_minute_idx on public.readings (bin_id, minute_at desc);
-create index fill_measurements_bin_measured_idx on public.fill_measurements (bin_id, measured_at desc);
-create index bin_events_occurred_idx on public.bin_events (occurred_at desc);
-create index bin_events_bin_occurred_idx on public.bin_events (bin_id, occurred_at desc);
-create index bin_commands_pending_idx on public.bin_commands (bin_id) where delivered_at is null;
+create index if not exists readings_bin_minute_idx on public.readings (bin_id, minute_at desc);
+create index if not exists fill_measurements_bin_measured_idx on public.fill_measurements (bin_id, measured_at desc);
+create index if not exists bin_events_occurred_idx on public.bin_events (occurred_at desc);
+create index if not exists bin_events_bin_occurred_idx on public.bin_events (bin_id, occurred_at desc);
+create index if not exists bin_commands_pending_idx on public.bin_commands (bin_id) where delivered_at is null;
 
 -- ---------------------------------------------------------------------------
--- 3. Triggers
--- ---------------------------------------------------------------------------
-
--- Same body as the kit's: harmless if the kit schema already created it.
-create or replace function public.set_updated_at()
-returns trigger
-language plpgsql
-set search_path = ''
-as $$
-begin
-  new.updated_at := now();
-  return new;
-end;
-$$;
-
-create trigger bins_set_updated_at before update on public.bins
-  for each row execute function public.set_updated_at();
-create trigger bin_status_set_updated_at before update on public.bin_status
-  for each row execute function public.set_updated_at();
-
--- ---------------------------------------------------------------------------
--- 4. Tokens
+-- 2. Tokens and keys (updated_at is set by the functions that change a row)
 -- ---------------------------------------------------------------------------
 
 create or replace function public.token_hash(token text)
@@ -154,40 +125,47 @@ language sql
 immutable
 set search_path = ''
 as $$
-  select extensions.digest(coalesce(token, ''), 'sha256');
+  select extensions.digest(coalesce(token, ''), 'sha256')
 $$;
 
 -- Creates a bin, or gives an existing one a new token (the old one stops working). Returns the token once.
 create or replace function public.register_bin(bin_code text, bin_address text default '')
 returns text
-language plpgsql
+language sql
+volatile
 security definer
 set search_path = ''
 as $$
-declare
-  new_token text := 'tbd_' || encode(extensions.gen_random_bytes(24), 'hex');
-begin
-  insert into public.bins (code, address, token_hash)
-  values (upper(trim(bin_code)), coalesce(trim(bin_address), ''), public.token_hash(new_token))
-  on conflict (code) do update
-    set token_hash = excluded.token_hash,
-        address = case when excluded.address <> '' then excluded.address else public.bins.address end;
-  return new_token;
-end;
+  with new_token as (
+    select 'tbd_' || encode(extensions.gen_random_bytes(24), 'hex') as token
+  ), saved as (
+    insert into public.bins (code, address, token_hash)
+    select upper(trim(bin_code)), coalesce(trim(bin_address), ''), public.token_hash(n.token)
+    from new_token n
+    on conflict (code) do update
+      set token_hash = excluded.token_hash,
+          address = case when excluded.address <> '' then excluded.address else public.bins.address end,
+          updated_at = now()
+    returning id
+  )
+  select n.token from new_token n, saved s
 $$;
 
 create or replace function public.create_panel_key(key_name text)
 returns text
-language plpgsql
+language sql
+volatile
 security definer
 set search_path = ''
 as $$
-declare
-  new_key text := 'tbp_' || encode(extensions.gen_random_bytes(24), 'hex');
-begin
-  insert into public.panel_keys (name, key_hash) values (trim(key_name), public.token_hash(new_key));
-  return new_key;
-end;
+  with new_key as (
+    select 'tbp_' || encode(extensions.gen_random_bytes(24), 'hex') as token
+  ), saved as (
+    insert into public.panel_keys (name, key_hash)
+    select trim(key_name), public.token_hash(k.token) from new_key k
+    returning id
+  )
+  select k.token from new_key k, saved s
 $$;
 
 create or replace function public.panel_key_ok(panel_key text)
@@ -200,107 +178,103 @@ as $$
   select exists (
     select 1 from public.panel_keys k
     where k.key_hash = public.token_hash(panel_key) and k.revoked_at is null
-  );
+  )
 $$;
 
 -- ---------------------------------------------------------------------------
--- 5. Ingestion (called by the Vercel API for a bin)
+-- 3. Ingestion (called by the Vercel API for a bin)
 -- ---------------------------------------------------------------------------
 
--- Stores one batch from a bin. Every part is idempotent, so the board can resend a batch after a failure.
--- Returns null for an unknown token; otherwise what was stored and the commands waiting for the bin.
+-- Stores one batch from a bin. Every part is idempotent, so the board can resend a batch after a
+-- failure. Returns null for an unknown token, otherwise what was stored and the waiting commands.
 create or replace function public.ingest_batch(device_token text, batch jsonb)
 returns jsonb
-language plpgsql
+language sql
+volatile
 security definer
 set search_path = ''
 as $$
-declare
-  bin public.bins%rowtype;
-  n_readings integer := 0;
-  n_fill integer := 0;
-  n_events integer := 0;
-  pending jsonb;
-begin
-  select * into bin from public.bins where token_hash = public.token_hash(device_token);
-  if not found then
-    return null;
-  end if;
-
-  insert into public.readings as r (bin_id, minute_at, samples, temperature_c, humidity_pct, tvoc_ppb,
-                                    tvoc_max_ppb, eco2_ppm, h2_raw, ethanol_raw)
-  select bin.id, to_timestamp((x ->> 'ts')::double precision), (x ->> 'samples')::smallint,
-         (x ->> 'temperature_c')::real, (x ->> 'humidity_pct')::real, (x ->> 'tvoc_ppb')::real,
-         (x ->> 'tvoc_max_ppb')::integer, (x ->> 'eco2_ppm')::real, (x ->> 'h2_raw')::real,
-         (x ->> 'ethanol_raw')::real
-  from jsonb_array_elements(coalesce(batch -> 'readings', '[]'::jsonb)) as x
-  on conflict (bin_id, minute_at) do update
-    set samples = excluded.samples, temperature_c = excluded.temperature_c,
-        humidity_pct = excluded.humidity_pct, tvoc_ppb = excluded.tvoc_ppb,
-        tvoc_max_ppb = excluded.tvoc_max_ppb, eco2_ppm = excluded.eco2_ppm,
-        h2_raw = excluded.h2_raw, ethanol_raw = excluded.ethanol_raw;
-  get diagnostics n_readings = row_count;
-
-  insert into public.fill_measurements (bin_id, measured_at, fill_pct, peak_pct, is_emptied, source)
-  select bin.id, to_timestamp((x ->> 'ts')::double precision), (x ->> 'fill_pct')::real,
-         (x ->> 'peak_pct')::real, coalesce((x ->> 'emptied')::boolean, false),
-         coalesce(x ->> 'source', 'camera')::public.fill_source
-  from jsonb_array_elements(coalesce(batch -> 'fill', '[]'::jsonb)) as x
-  on conflict (bin_id, measured_at) do nothing;
-  get diagnostics n_fill = row_count;
-
-  insert into public.bin_events (bin_id, device_event_id, occurred_at, type, severity, title, message, "values")
-  select bin.id, x ->> 'uid', to_timestamp((x ->> 'ts')::double precision), x ->> 'type',
-         (x ->> 'severity')::public.bin_event_severity, x ->> 'title', coalesce(x ->> 'message', ''),
-         coalesce(x -> 'values', '{}'::jsonb)
-  from jsonb_array_elements(coalesce(batch -> 'events', '[]'::jsonb)) as x
-  on conflict (bin_id, device_event_id) do nothing;
-  get diagnostics n_events = row_count;
-
-  if batch ? 'status' then
+  with bin as (
+    select b.id, b.code from public.bins b where b.token_hash = public.token_hash(device_token)
+  ), minute_rows as (
+    select distinct on (e.value ->> 'ts') e.value as x
+    from jsonb_array_elements(coalesce(batch -> 'readings', '[]'::jsonb)) with ordinality as e (value, n)
+    order by e.value ->> 'ts', e.n desc
+  ), new_readings as (
+    insert into public.readings (bin_id, minute_at, samples, temperature_c, humidity_pct, tvoc_ppb,
+                                 tvoc_max_ppb, eco2_ppm, h2_raw, ethanol_raw)
+    select bin.id, to_timestamp((r.x ->> 'ts')::double precision), (r.x ->> 'samples')::smallint,
+           (r.x ->> 'temperature_c')::real, (r.x ->> 'humidity_pct')::real, (r.x ->> 'tvoc_ppb')::real,
+           (r.x ->> 'tvoc_max_ppb')::integer, (r.x ->> 'eco2_ppm')::real, (r.x ->> 'h2_raw')::real,
+           (r.x ->> 'ethanol_raw')::real
+    from bin, minute_rows r
+    on conflict (bin_id, minute_at) do update
+      set samples = excluded.samples, temperature_c = excluded.temperature_c,
+          humidity_pct = excluded.humidity_pct, tvoc_ppb = excluded.tvoc_ppb,
+          tvoc_max_ppb = excluded.tvoc_max_ppb, eco2_ppm = excluded.eco2_ppm,
+          h2_raw = excluded.h2_raw, ethanol_raw = excluded.ethanol_raw
+    returning 1
+  ), new_fill as (
+    insert into public.fill_measurements (bin_id, measured_at, fill_pct, peak_pct, is_emptied, source)
+    select bin.id, to_timestamp((x ->> 'ts')::double precision), (x ->> 'fill_pct')::real,
+           (x ->> 'peak_pct')::real, coalesce((x ->> 'emptied')::boolean, false),
+           coalesce(x ->> 'source', 'camera')
+    from bin, jsonb_array_elements(coalesce(batch -> 'fill', '[]'::jsonb)) as x
+    on conflict (bin_id, measured_at) do nothing
+    returning 1
+  ), new_events as (
+    insert into public.bin_events (bin_id, device_event_id, occurred_at, type, severity, title, message, details)
+    select bin.id, x ->> 'uid', to_timestamp((x ->> 'ts')::double precision), x ->> 'type',
+           x ->> 'severity', x ->> 'title', coalesce(x ->> 'message', ''), coalesce(x -> 'values', '{}'::jsonb)
+    from bin, jsonb_array_elements(coalesce(batch -> 'events', '[]'::jsonb)) as x
+    on conflict (bin_id, device_event_id) do nothing
+    returning 1
+  ), new_status as (
     insert into public.bin_status (bin_id, state, reported_at)
-    values (bin.id, batch -> 'status', now())
-    on conflict (bin_id) do update set state = excluded.state, reported_at = excluded.reported_at;
-  end if;
-
-  update public.bins
-  set last_seen_at = now(),
-      address = case when coalesce(batch ->> 'address', '') <> '' then left(batch ->> 'address', 200)
-                     else address end
-  where id = bin.id;
-
-  -- Commands older than a day are stale (the request no longer makes sense): they are dropped.
-  with handed as (
-    update public.bin_commands c set delivered_at = now()
+    select bin.id, batch -> 'status', now() from bin where batch -> 'status' is not null
+    on conflict (bin_id) do update
+      set state = excluded.state, reported_at = excluded.reported_at, updated_at = now()
+    returning 1
+  ), seen as (
+    update public.bins b
+    set last_seen_at = now(),
+        address = case when coalesce(batch ->> 'address', '') <> '' then left(batch ->> 'address', 200)
+                       else b.address end
+    from bin
+    where b.id = bin.id
+    returning 1
+  ), handed as (
+    -- Commands older than a day are stale (the request no longer makes sense) and are dropped.
+    update public.bin_commands c
+    set delivered_at = now()
+    from bin
     where c.bin_id = bin.id and c.delivered_at is null and c.created_at > now() - interval '1 day'
     returning c.id, c.command, c.created_at
   )
-  select coalesce(jsonb_agg(jsonb_build_object('id', h.id, 'command', h.command,
-                                               'ts', extract(epoch from h.created_at))
-                            order by h.created_at), '[]'::jsonb)
-  into pending from handed h;
-
-  return jsonb_build_object('bin', bin.code, 'readings', n_readings, 'fill', n_fill,
-                            'events', n_events, 'commands', pending);
-end;
+  select case when exists (select 1 from bin) then jsonb_build_object(
+    'bin', (select code from bin),
+    'readings', (select count(*) from new_readings),
+    'fill', (select count(*) from new_fill),
+    'events', (select count(*) from new_events),
+    'commands', coalesce((select jsonb_agg(jsonb_build_object('id', h.id, 'command', h.command,
+                                                              'ts', extract(epoch from h.created_at))
+                                           order by h.created_at)
+                          from handed h), '[]'::jsonb))
+  end
 $$;
 
 -- ---------------------------------------------------------------------------
--- 6. Control panel (called by the Vercel API for the dashboard)
+-- 4. Control panel (called by the Vercel API for the dashboard)
 -- ---------------------------------------------------------------------------
 
 create or replace function public.panel_bins(panel_key text)
 returns jsonb
-language plpgsql
+language sql
 stable
 security definer
 set search_path = ''
 as $$
-begin
-  if not public.panel_key_ok(panel_key) then
-    return null;
-  end if;
-  return coalesce((
+  select case when public.panel_key_ok(panel_key) then coalesce((
     select jsonb_agg(jsonb_build_object(
              'code', b.code,
              'address', b.address,
@@ -313,128 +287,110 @@ begin
            order by b.code)
     from public.bins b
     left join public.bin_status s on s.bin_id = b.id
-  ), '[]'::jsonb);
-end;
+  ), '[]'::jsonb) end
 $$;
 
--- One bin in the shape the dashboard already understands (the board's "snapshot" message), plus the
--- 30-day fill series from the cloud copy and the last 100 events of every bin (the control centre).
+-- One bin in the shape the dashboard already understands (the snapshot message of the board), plus
+-- the 30 day fill series from the cloud copy and the last 100 events of every bin (control centre).
+-- The series keeps the last measurement of every hour and the two around each emptying (the peak).
 create or replace function public.panel_snapshot(panel_key text, bin_code text)
 returns jsonb
-language plpgsql
+language sql
 stable
 security definer
 set search_path = ''
 as $$
-declare
-  bin public.bins%rowtype;
-  st public.bin_status%rowtype;
-  chart jsonb;
-  last_fill jsonb;
-  recent_events jsonb;
-  fill jsonb;
-begin
-  if not public.panel_key_ok(panel_key) then
-    return null;
-  end if;
-  select * into bin from public.bins where code = upper(trim(bin_code));
-  if not found then
-    return jsonb_build_object('error', 'not_found');
-  end if;
-  select * into st from public.bin_status where bin_id = bin.id;
-
-  -- Last measurement of every hour, plus the two measurements around each emptying (keeps the peak).
-  with m as (
+  with target as (
+    select b.id, b.code, b.address, b.last_seen_at from public.bins b where b.code = upper(trim(bin_code))
+  ), st as (
+    select s.state, s.reported_at from public.bin_status s join target t on t.id = s.bin_id
+  ), m as (
     select f.measured_at, f.fill_pct, f.peak_pct, f.is_emptied,
            lead(date_trunc('hour', f.measured_at)) over w as next_hour,
            lead(f.is_emptied) over w as next_emptied
     from public.fill_measurements f
-    where f.bin_id = bin.id and f.measured_at > now() - interval '30 days'
+    join target t on t.id = f.bin_id
+    where f.measured_at > now() - interval '30 days'
     window w as (order by f.measured_at)
+  ), chart as (
+    select coalesce(jsonb_agg(jsonb_build_array(round(extract(epoch from m.measured_at)), m.fill_pct,
+                                                m.peak_pct, m.is_emptied) order by m.measured_at), '[]'::jsonb) as v
+    from m
+    where m.next_hour is null or m.next_hour <> date_trunc('hour', m.measured_at)
+       or m.is_emptied or m.next_emptied
+  ), last_fill as (
+    select jsonb_build_object('ts', extract(epoch from f.measured_at), 'fill_pct', f.fill_pct,
+                              'peak_pct', f.peak_pct, 'source', f.source) as v
+    from public.fill_measurements f
+    join target t on t.id = f.bin_id
+    order by f.measured_at desc
+    limit 1
+  ), recent_events as (
+    select coalesce(jsonb_agg(e.event order by e.occurred_at), '[]'::jsonb) as v
+    from (
+      select ev.occurred_at,
+             jsonb_build_object('id', ev.id, 'ts', extract(epoch from ev.occurred_at), 'bin_id', b.code,
+                                'address', b.address, 'type', ev.type, 'severity', ev.severity,
+                                'title', ev.title, 'message', ev.message, 'values', ev.details) as event
+      from public.bin_events ev
+      join public.bins b on b.id = ev.bin_id
+      order by ev.occurred_at desc
+      limit 100
+    ) e
   )
-  select coalesce(jsonb_agg(jsonb_build_array(round(extract(epoch from m.measured_at)), m.fill_pct,
-                                              m.peak_pct, m.is_emptied) order by m.measured_at), '[]'::jsonb)
-  into chart
-  from m
-  where m.next_hour is null or m.next_hour <> date_trunc('hour', m.measured_at)
-     or m.is_emptied or m.next_emptied;
-
-  select jsonb_build_object('ts', extract(epoch from f.measured_at), 'fill_pct', f.fill_pct,
-                            'peak_pct', f.peak_pct, 'source', f.source)
-  into last_fill
-  from public.fill_measurements f
-  where f.bin_id = bin.id
-  order by f.measured_at desc
-  limit 1;
-
-  select coalesce(jsonb_agg(e.event order by e.occurred_at), '[]'::jsonb)
-  into recent_events
-  from (
-    select ev.occurred_at,
-           jsonb_build_object('id', ev.id, 'ts', extract(epoch from ev.occurred_at), 'bin_id', b.code,
-                              'address', b.address, 'type', ev.type, 'severity', ev.severity,
-                              'title', ev.title, 'message', ev.message, 'values', ev."values") as event
-    from public.bin_events ev
-    join public.bins b on b.id = ev.bin_id
-    order by ev.occurred_at desc
-    limit 100
-  ) e;
-
-  -- The board computes level, prediction and statistics from its own CSV; the series comes from here.
-  if st.state ? 'fill' then
-    fill := (st.state -> 'fill') || jsonb_build_object('chart', chart);
-  end if;
-
-  return jsonb_build_object(
-    'bin', jsonb_build_object('id', bin.code, 'address', bin.address),
-    'last_seen_at', extract(epoch from bin.last_seen_at),
-    'online', coalesce(bin.last_seen_at > now() - interval '2 minutes', false),
-    'reported_at', extract(epoch from st.reported_at),
-    'sample', st.state -> 'sample',
-    'recent', coalesce(st.state -> 'recent', '[]'::jsonb),
-    'alarm', st.state -> 'alarm',
-    'odor', st.state -> 'odor',
-    'fill', fill,
-    'last_fill', last_fill,
-    'events', recent_events
-  );
-end;
+  select case
+    when not public.panel_key_ok(panel_key) then null
+    when not exists (select 1 from target) then jsonb_build_object('error', 'not_found')
+    else jsonb_build_object(
+      'bin', (select jsonb_build_object('id', t.code, 'address', t.address) from target t),
+      'last_seen_at', (select extract(epoch from t.last_seen_at) from target t),
+      'online', (select coalesce(t.last_seen_at > now() - interval '2 minutes', false) from target t),
+      'reported_at', (select extract(epoch from s.reported_at) from st s),
+      'sample', (select s.state -> 'sample' from st s),
+      'recent', coalesce((select s.state -> 'recent' from st s), '[]'::jsonb),
+      'alarm', (select s.state -> 'alarm' from st s),
+      'odor', (select s.state -> 'odor' from st s),
+      'fill', (select (s.state -> 'fill') || jsonb_build_object('chart', (select v from chart))
+               from st s where s.state -> 'fill' is not null),
+      'last_fill', (select v from last_fill),
+      'events', (select v from recent_events))
+  end
 $$;
 
+-- Pressing the button twice does not queue the same request twice.
 create or replace function public.panel_command(panel_key text, bin_code text, command text)
 returns jsonb
-language plpgsql
+language sql
+volatile
 security definer
 set search_path = ''
 as $$
-declare
-  target uuid;
-  queued uuid;
-  kind public.bin_command_kind;
-begin
-  if not public.panel_key_ok(panel_key) then
-    return null;
-  end if;
-  if command is null or command not in ('mark_emptied') then
-    return jsonb_build_object('error', 'unknown_command');
-  end if;
-  kind := command::public.bin_command_kind;
-  select b.id into target from public.bins b where b.code = upper(trim(bin_code));
-  if target is null then
-    return jsonb_build_object('error', 'not_found');
-  end if;
-  -- One pending request of a kind is enough: pressing the button twice does not queue it twice.
-  select c.id into queued from public.bin_commands c
-  where c.bin_id = target and c.command = kind and c.delivered_at is null;
-  if queued is null then
-    insert into public.bin_commands (bin_id, command) values (target, kind) returning id into queued;
-  end if;
-  return jsonb_build_object('id', queued, 'command', kind);
-end;
+  with allowed as (
+    select public.panel_key_ok(panel_command.panel_key) as ok,
+           panel_command.command in ('mark_emptied') as known
+  ), target as (
+    select b.id from public.bins b, allowed a
+    where b.code = upper(trim(panel_command.bin_code)) and a.ok
+  ), pending as (
+    select c.id from public.bin_commands c join target t on t.id = c.bin_id
+    where c.command = panel_command.command and c.delivered_at is null
+  ), queued as (
+    insert into public.bin_commands (bin_id, command)
+    select t.id, panel_command.command from target t, allowed a
+    where a.known and not exists (select 1 from pending)
+    returning id
+  )
+  select case
+    when not (select ok from allowed) then null
+    when not (select known from allowed) then jsonb_build_object('error', 'unknown_command')
+    when not exists (select 1 from target) then jsonb_build_object('error', 'not_found')
+    else jsonb_build_object('id', coalesce((select id from queued), (select id from pending)),
+                            'command', panel_command.command)
+  end
 $$;
 
 -- ---------------------------------------------------------------------------
--- 7. Privileges and Row Level Security
+-- 5. Privileges and Row Level Security
 -- ---------------------------------------------------------------------------
 
 alter table public.bins enable row level security;
@@ -455,31 +411,3 @@ revoke all on function public.token_hash(text), public.register_bin(text, text),
 -- The only doors: each one checks its own token or key.
 grant execute on function public.ingest_batch(text, jsonb), public.panel_bins(text),
   public.panel_snapshot(text, text), public.panel_command(text, text, text) to anon, authenticated;
-
--- Next to the IAMAimpresa kit: a 'bins' feature and read access for signed-in users who hold it.
-do $$
-begin
-  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-             where n.nspname = 'public' and p.proname = 'has_access')
-     and to_regclass('public.features') is not null then
-    insert into public.features (key, name, description, default_level, sort_order)
-    values ('bins', 'Cassonetti', 'TO-Breath bins: fill level, gas, odour and events.', 'read', 50)
-    on conflict (key) do nothing;
-
-    grant select (id, code, address, last_seen_at, created_at, updated_at) on public.bins to authenticated;
-    grant select on public.bin_status, public.readings, public.fill_measurements, public.bin_events
-      to authenticated;
-
-    create policy "bins: read" on public.bins
-      for select to authenticated using (public.has_access('bins', 'read'));
-    create policy "bin_status: read" on public.bin_status
-      for select to authenticated using (public.has_access('bins', 'read'));
-    create policy "readings: read" on public.readings
-      for select to authenticated using (public.has_access('bins', 'read'));
-    create policy "fill_measurements: read" on public.fill_measurements
-      for select to authenticated using (public.has_access('bins', 'read'));
-    create policy "bin_events: read" on public.bin_events
-      for select to authenticated using (public.has_access('bins', 'read'));
-  end if;
-end;
-$$;
