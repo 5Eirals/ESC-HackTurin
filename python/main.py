@@ -76,8 +76,8 @@ FILL_FULL_PCT = 95           # evento "pieno"
 # mostrare previsione e grafico. Mettere False sul cassonetto vero.
 SIMULATED_HISTORY = True
 
-# Odore percepito: modalita' demo = finestre di 60 s e soglie basse (1,3x / 2x) per mostrarlo dal
-# vivo in pochi minuti. Mettere False sul cassonetto vero (finestre di 30 min, soglie 2x / 5x).
+# Odore percepito: modalita' demo = finestre di 60 s invece di 30 min (soglie uguali, 2x / 5x) per
+# mostrarlo dal vivo in pochi minuti. Mettere False sul cassonetto vero.
 ODOR_DEMO_MODE = True
 # L'allarme gas rapido (gas_alarm.py) e' pensato per il sensore DENTRO il cassonetto (degrado,
 # principio d'incendio): in demo, con il sensore fuori e l'alcol come sorgente, darebbe allarmi

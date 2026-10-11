@@ -13,8 +13,8 @@ Quindi (s_rif - s) / 512 = ln(c / c_rif): di quante volte l'aria e' piu' carica 
 Indice = ln-rapporti di H2 ed etanolo combinati (media o massimo), sulla MEDIANA della finestra.
 Due profili:
 - "normale": finestre di 30 minuti, per il cassonetto vero;
-- "demo": finestre di 60 s e soglie basse, per mostrare il sistema dal vivo in pochi minuti
-  (es. gel igienizzante all'alcol in uno scatolone chiuso, sensore fuori).
+- "demo": stesse soglie, ma finestre di 60 s, per mostrare il sistema dal vivo in pochi minuti
+  (es. gel igienizzante all'alcol accanto allo scatolone, sensore fuori).
 Le soglie sono un punto di partenza: vanno tarate con le prove (es. "senti odore? si'/no").
 
 Limite noto: i segnali grezzi dipendono anche da temperatura e umidita'; un forte cambio di
@@ -54,9 +54,9 @@ PROFILES = {
         "ref_min_samples": 30,
         "min_window_fraction": 0.5,
         "eval_period_s": 5,
-        "yellow_ratio": 1.3,
-        "red_ratio": 2.0,
-        "red_hot_ratio": 2.0,
+        "yellow_ratio": 2.0,          # stesse soglie del profilo normale: cambiano solo i tempi
+        "red_ratio": 5.0,
+        "red_hot_ratio": 3.0,
         "hot_c": 25.0,
         "min_persistence": 0.5,
         "hysteresis_ln": 0.08,
