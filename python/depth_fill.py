@@ -192,11 +192,20 @@ def _floor_region(d):
     grad = np.hypot(cv2.Sobel(ds, cv2.CV_32F, 1, 0), cv2.Sobel(ds, cv2.CV_32F, 0, 1)) / 8
     edges = np.ones(d.shape, bool)
     edges[h // 10:h - h // 10, w // 10:w - w // 10] = False
-    slow = grad < CFG["auto_floor_grad"] * np.median(grad[edges])
-    if not slow[h // 2, w // 2]:
+    thr = CFG["auto_floor_grad"] * np.median(grad[edges])
+    slow = cv2.morphologyEx((grad < thr).astype(np.uint8), cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    # The floor is the largest slow region reaching the central window (the exact centre pixel
+    # may be off: ToF board in view, a reflection of the flash, a crease of the cardboard)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(slow)
+    win = labels[h // 2 - h // 8:h // 2 + h // 8, w // 2 - w // 8:w // 2 + w // 8]
+    ids = [i for i in np.unique(win) if i != 0]
+    _floor_region.debug = (f"edge gradient {np.median(grad[edges]):.5f}, centre gradient "
+                           f"{np.median(grad[h // 2 - 20:h // 2 + 20, w // 2 - 20:w // 2 + 20]):.5f}, "
+                           f"threshold {thr:.5f}")
+    if not ids:
         return np.zeros(d.shape, bool)
-    _, labels = cv2.connectedComponents(slow.astype(np.uint8))
-    return labels == labels[h // 2, w // 2]
+    best = max(ids, key=lambda i: stats[i, cv2.CC_STAT_AREA])
+    return labels == best
 
 def _shift_from_walls(profile, lo, hi):
     """Shift b where the lines of the two walls on a profile meet (None if not usable).
@@ -240,7 +249,9 @@ def auto_calibrate(d, tof_distance_mm):
     h, w = d.shape
     floor = _floor_region(d)
     if floor.mean() < 0.05:
-        raise RuntimeError("floor not found: is the bin empty and the camera looking at its centre?")
+        raise RuntimeError(f"floor not found ({100 * floor.mean():.1f}% of the image; "
+                           f"{_floor_region.debug}): is the bin empty and the camera looking at "
+                           f"its centre? See {CFG['calib_overlay']}")
     rows = np.nonzero(floor[:, w // 2])[0]
     cols = np.nonzero(floor[h // 2, :])[0]
 
@@ -376,8 +387,10 @@ def calibrate(img=None, tof_distance_mm=None):
     d = infer(img)
     calib = {}
     if CFG["auto_calibration"]:
-        info, floor_mask, band = auto_calibrate(d, tof_distance_mm)
         cv2.imwrite(CFG["calib_frame"], img)
+        empty = np.zeros(d.shape, bool)
+        save_overlay(img, d, empty, empty)              # kept if the calibration fails
+        info, floor_mask, band = auto_calibrate(d, tof_distance_mm)
         save_overlay(img, d, floor_mask, band)
         calib = {"rim_dist_mm": CFG["rim_dist_mm"], "bin_depth_mm": CFG["bin_depth_mm"], "auto": info}
         print(f"Auto-calibration: floor at {tof_distance_mm} mm (ToF), reference band on the "

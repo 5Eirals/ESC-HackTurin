@@ -60,8 +60,7 @@ VISION_MODE = "run"
 VISION_MODES = ("snapshot", "calibrate", "run")
 
 CAPTURE_INTERVAL_S = 300     # una foto + analisi ogni 5 minuti
-FLASH_LEVEL = 255            # luminosita' dell'anello LED durante lo scatto
-FLASH_SETTLE_S = 1.0         # attesa perche' l'esposizione del telefono si adatti al flash
+FLASH_SETTLE_S = 1.5         # attesa perche' l'esposizione del telefono si adatti alla torcia
 
 # Telefono usato come camera (app IP Webcam)
 PHONE_IP = "192.168.23.177"
@@ -527,20 +526,36 @@ def mcu_call(name, *args, timeout=5):
         return None
 
 
+def phone_torch(on):
+    """Accende o spegne la torcia del telefono (parametro torch dell'app IP camera)."""
+    state = "on" if on else "off"
+    last = None
+    for path in (f"/control/status?torch={state}", f"/?torch={state}"):
+        try:
+            conn, r = request(path)
+            r.read()
+            conn.close()
+            return True
+        except Exception as e:
+            last = e
+    print(f"[{now_str()}] Torcia del telefono: ERRORE {last}")
+    return False
+
+
 def take_photo():
-    """Scatta con il flash dell'anello LED acceso e legge il ToF nello stesso momento.
+    """Scatta con la torcia del telefono accesa e legge il ToF nello stesso momento.
     Ritorna (jpeg, tof_mm) oppure (None, tof_mm) se la camera non risponde."""
-    mcu_call("set_flash", FLASH_LEVEL)
+    phone_torch(True)
     time.sleep(FLASH_SETTLE_S)
     try:
         method, data, ms = grab()
-        if data[:2] != b"\xff\xd8":
+        if data[:2] != bytes((0xFF, 0xD8)):
             raise ValueError("la risposta non è un JPEG")
     except Exception as e:
         print(f"[{now_str()}] Camera: ERRORE {e}")
         data = None
     finally:
-        mcu_call("set_flash", 0)
+        phone_torch(False)
     tof = mcu_call("read_tof")
     tof = int(tof) if tof is not None else -1
     mcu_call("camera_status", data is not None)

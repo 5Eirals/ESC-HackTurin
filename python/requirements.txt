@@ -1,0 +1,4 @@
+# Pacchetti Python per la visione (depth_fill.py), installati da App Lab nel container dell'app.
+# OpenCV e NumPy sono gia' nel container di App Lab (opencv-python-headless 4.13): non vanno
+# elencati, altrimenti l'installazione va in conflitto con la versione fissata da App Lab.
+onnxruntime==1.30.0
