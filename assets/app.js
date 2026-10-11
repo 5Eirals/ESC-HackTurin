@@ -66,15 +66,12 @@ function renderOdor(o) {
   else if (o.state === 'insufficient') setBadge($('odor-badge'), 'Dati in raccolta…', 'warn');
   else if (o.level) setBadge($('odor-badge'), ...ODOR_LEVELS[o.level]);
 
-  const demo = o.profile === 'demo';
   const level = !settling && o.level ? ODOR_LEVELS[o.level] : null;
   setTone($('kpi-odor-value'), level ? level[1] : null);
-  $('odor-level-text').textContent = level ? level[0]
-    : `${demo ? 'Modalità demo · ' : ''}Rispetto all'aria dopo lo svuotamento`;
+  $('odor-level-text').textContent = level ? level[0] : "Rispetto all'aria dopo lo svuotamento";
   if (o.window_label) {
     document.querySelector('#odor-title .info-dot').dataset.tip =
-      `Sensore fuori dal cassonetto: mediana degli ultimi ${o.window_label} rispetto all'aria misurata dopo l'ultimo svuotamento.`
-      + (demo ? ` Modalità demo: finestre accorciate, soglie ${o.thresholds.yellow_ratio}× / ${o.thresholds.red_ratio}×.` : '');
+      `Sensore fuori dal cassonetto: mediana degli ultimi ${o.window_label} rispetto all'aria misurata dopo l'ultimo svuotamento.`;
   }
 
   $('odor-ratio').textContent = o.ratio === null ? '—' : `${fmt(o.ratio, 1)}×`;
@@ -137,9 +134,9 @@ function renderAlarm(a) {
   const banner = $('alarm-banner');
   if (a.state === 'disabled') {
     banner.classList.add('hidden');
-    setBadge($('alarm-state'), 'Allarme rapido disattivato (demo)', 'muted');
+    setBadge($('alarm-state'), 'Allarme rapido non attivo', 'muted');
     setTone($('kpi-gas-value'), null);
-    $('rest').textContent = "In demo conta l'indice di odore";
+    $('rest').textContent = '';
     return;
   }
   if (a.state === 'alert') {
