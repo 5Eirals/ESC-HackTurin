@@ -105,6 +105,7 @@ def decode_jpeg(data):
 
 # ---------------------------------------------------------------- inference
 _sess = None
+_last_waste_mm = 0.0      # last waste height measured by the ToF
 def infer(img_bgr):
     global _sess
     if _sess is None:
@@ -386,28 +387,33 @@ def analyze(img, tracker, tof_distance_mm=None):
     t0 = time.time()
     d = infer(img)
     infer_ms = (time.time() - t0) * 1000
-    rim = load_mask(CFG["rim_mask"], d.shape)
     binm = load_mask(CFG["bin_mask"], d.shape)
     empty_z = np.load(CFG["empty_depth"])
     if empty_z.shape != d.shape:                                 # camera resolution changed
         empty_z = cv2.resize(empty_z, (d.shape[1], d.shape[0]), interpolation=cv2.INTER_LINEAR)
-    fb = load_fallback()
-    # Many anchors (walls and uncovered floor as in the calibration photo) + the ToF; the model
-    # rescales its relative depth on every photo, two anchors alone are not stable enough
+    # Hybrid: the AI depth map is reliable for the bin geometry (calibration) but not for the
+    # height of flat objects seen from above, so the floor area covered comes from the comparison
+    # with the calibration photo and the height from the ToF (the last one measured on waste
+    # when the ToF sees bare floor).
+    global _last_waste_mm
     same = unchanged_pixels(img, binm)
-    anchors = float(same.mean()) if same is not None else 0.0
-    z = None
-    if anchors >= CFG["anchor_min"]:
-        z, ab, tof_used = to_metric_anchored(d, same, empty_z, tof_distance_mm)
-        if ab[0] <= 0:                                           # nonsense slope: fall back
-            z = None
-    if z is None:
-        z, ab, tof_used = to_metric(d, rim, tof_distance_mm, fb)
-        anchors = 0.0
-
-    fill_h = np.clip(empty_z - z, 0, CFG["bin_depth_mm"])[binm]
-    raw_pct = 100 * float(np.mean(fill_h)) / CFG["bin_depth_mm"]     # volume: mean height over the floor
-    peak_pct = 100 * float(np.percentile(fill_h, 90)) / CFG["bin_depth_mm"]  # heaps
+    if same is None:
+        raise RuntimeError("calib_frame.jpg missing or of a different size: run calibrate again")
+    covered = binm & ~same
+    covered = cv2.morphologyEx(covered.astype(np.uint8), cv2.MORPH_OPEN, np.ones((9, 9), np.uint8)) > 0
+    coverage = float(covered[binm].mean())
+    floor_mm = json.load(open(CFG["calib_ab"])).get("auto", {}).get("floor_mm") or float(np.median(empty_z[binm]))
+    tof_used = tof_distance_mm > 0
+    waste_mm = max(0.0, floor_mm - tof_distance_mm) if tof_used else 0.0
+    if waste_mm > 10:
+        _last_waste_mm = waste_mm                   # the ToF sees waste: remember its height
+    height = waste_mm if waste_mm > 10 else (_last_waste_mm if coverage > 0.02 else 0.0)
+    height = min(height, CFG["bin_depth_mm"])
+    z = np.full(d.shape, floor_mm, np.float32)
+    z[covered] = floor_mm - height
+    raw_pct = 100 * coverage * height / CFG["bin_depth_mm"]
+    peak_pct = 100 * height / CFG["bin_depth_mm"] if coverage > 0.02 else 0.0
+    anchors = coverage
     fill_pct, emptied = tracker.update(round(raw_pct, 1))
     return {
         "ts": time.time(),
@@ -416,11 +422,11 @@ def analyze(img, tracker, tof_distance_mm=None):
         "peak_pct": round(peak_pct, 1),
         "emptied": emptied,
         "surface_mm": round(float(np.median(z[binm]))),  # camera -> waste surface
-        "rim_mm": round(float(np.median(z[rim]))),       # sanity check vs rim_dist_mm
+        "rim_mm": round(CFG["rim_dist_mm"]),             # reference band (calibration)
         "tof_mm": int(tof_distance_mm),
         "tof_used": tof_used,                     # False = rim-only fallback fit
         "inference_ms": round(infer_ms),
-        "anchors_pct": round(100 * anchors, 1),  # 0 = two-anchor fallback (band + ToF)
+        "anchors_pct": round(100 * anchors, 1),  # share of the floor covered by waste
     }
 
 # ---------------------------------------------------------------- modes

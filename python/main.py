@@ -681,7 +681,7 @@ def vision_step():
     print(f"[{now_str()}] Riempimento {result['fill_pct']}% (grezzo {result['raw_fill_pct']}%, "
           f"picchi {result['peak_pct']}%), superficie a {result['surface_mm']} mm, "
           f"riferimento a {result['rim_mm']} mm, ToF {'usato' if result['tof_used'] else 'non valido'}, "
-          f"ancore {result.get('anchors_pct', 0)}%, inferenza {result['inference_ms']} ms"
+          f"fondo occupato {result.get('anchors_pct', 0)}%, inferenza {result['inference_ms']} ms"
           f"{' - CASSONETTO SVUOTATO' if result['emptied'] else ''}"
           f"{'' if saved else ' (NON salvato su file)'}")
     print(f"[{now_str()}] Previsione: {describe_eta(status['prediction'])}")
