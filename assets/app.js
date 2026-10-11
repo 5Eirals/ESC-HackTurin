@@ -1,4 +1,6 @@
 // Dashboard del cassonetto: letture in tempo reale, grafici e centro di controllo simulato.
+// Aspetto e colori vengono dal design system IAMAimpresa (ds/tokens.css, ds/components.css):
+// qui si usano solo i token, mai colori scritti a mano.
 
 const HISTORY_SIZE = 600;
 const MAX_EVENTS = 100;
@@ -9,6 +11,11 @@ let restTvoc = null;
 const $ = (id) => document.getElementById(id);
 const fmt = (v, digits = 0) => (v === null || v === undefined ? '—' : Number(v).toFixed(digits));
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const chartFont = () => `11px ${getComputedStyle(document.body).fontFamily}`;
+const clampPct = (v) => Math.max(0, Math.min(100, v));
+
+// Stati della dashboard -> toni dello StatusBadge del design system
+const TONES = { ok: 'success', warn: 'warning', bad: 'destructive', off: 'muted', info: 'info' };
 
 const ui = new WebUI();
 ui.on_connect(() => setBadge($('connection'), 'Connesso', 'ok'));
@@ -33,6 +40,18 @@ ui.on_message('snapshot', (data) => {
 ui.on_message('fill', renderFill);
 ui.on_message('odor', renderOdor);
 
+function setBadge(el, text, kind) {
+  el.textContent = text;
+  el.className = `status status-${TONES[kind] ?? 'muted'}`;
+}
+
+// Il numero di una KpiCard si colora solo negli stati di attenzione
+function setTone(el, kind) {
+  el.classList.remove('tone-warning', 'tone-destructive', 'tone-success');
+  const tone = TONES[kind];
+  if (tone === 'warning' || tone === 'destructive') el.classList.add(`tone-${tone}`);
+}
+
 // --- Odore percepito (odor_index.py) -------------------------------------------------------
 const ODOR_LEVELS = {
   green: ['Nessun odore', 'ok'],
@@ -42,18 +61,25 @@ const ODOR_LEVELS = {
 const REF_SOURCES = { avvio: "dall'avvio", svuotamento: 'dopo lo svuotamento', manuale: 'segnalato a mano' };
 
 function renderOdor(o) {
+  const settling = o.state === 'collecting' || o.state === 'insufficient';
   if (o.state === 'collecting') setBadge($('odor-badge'), 'Misura del riferimento…', 'warn');
   else if (o.state === 'insufficient') setBadge($('odor-badge'), 'Dati in raccolta…', 'warn');
   else if (o.level) setBadge($('odor-badge'), ...ODOR_LEVELS[o.level]);
 
+  const level = !settling && o.level ? ODOR_LEVELS[o.level] : null;
+  setTone($('kpi-odor-value'), level ? level[1] : null);
+  $('odor-level-text').textContent = level ? level[0] : "Rispetto all'aria dopo lo svuotamento";
+
   $('odor-ratio').textContent = o.ratio === null ? '—' : `${fmt(o.ratio, 1)}×`;
-  $('odor-persistence').textContent = o.persistence === null ? '—' : fmt(o.persistence * 100);
+  const persistence = o.persistence === null ? null : o.persistence * 100;
+  $('odor-persistence').textContent = persistence === null ? '—' : `${fmt(persistence)}%`;
+  $('odor-persistence-fill').style.width = `${persistence === null ? 0 : clampPct(persistence)}%`;
   $('odor-split').textContent = o.delta_h2 === null ? '—'
     : `${fmt(Math.exp(o.delta_h2), 1)} / ${fmt(Math.exp(o.delta_ethanol), 1)}`;
 
   const parts = [];
-  if (o.reference) parts.push(`Riferimento ${REF_SOURCES[o.reference.source] ?? ''}, ${fmt(o.reference.age_h, 1)} h fa`);
-  if (o.collecting) parts.push(`nuovo riferimento in misura (${fmt(o.collecting.progress * 100)}%)`);
+  if (o.reference) parts.push(`${REF_SOURCES[o.reference.source] ?? ''}, ${fmt(o.reference.age_h, 1)} h fa`);
+  if (o.collecting) parts.push(`nuovo in misura (${fmt(o.collecting.progress * 100)}%)`);
   $('odor-reference').textContent = parts.join(' · ') || 'Nessun riferimento';
   $('odor-reset').disabled = Boolean(o.collecting);
 }
@@ -62,6 +88,9 @@ $('odor-reset').addEventListener('click', () => {
   $('odor-reset').disabled = true;
   ui.send_message('mark_emptied', {});
 });
+
+// --- Letture in tempo reale e allarme gas --------------------------------------------------
+const timeFmt = new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 ui.on_message('reading', (data) => {
   history.push(data.sample);
@@ -73,18 +102,15 @@ ui.on_message('reading', (data) => {
 
 ui.on_message('event', addEvent);
 
-function setBadge(el, text, kind) {
-  el.textContent = text;
-  el.className = `badge badge-${kind}`;
-}
-
 function renderSample(s) {
   $('tvoc').textContent = fmt(s.tvoc_ppb);
+  $('kpi-tvoc').textContent = fmt(s.tvoc_ppb);
   $('eco2').textContent = fmt(s.eco2_ppm);
   $('temp').textContent = fmt(s.temperature_c, 1);
   $('rh').textContent = fmt(s.humidity_pct, 1);
   $('h2').textContent = fmt(s.h2_raw);
   $('ethanol').textContent = fmt(s.ethanol_raw);
+  if (s.ts) $('last-update').textContent = `Lettura delle ${timeFmt.format(s.ts * 1000)}`;
   setBadge($('sensor-aht'), s.aht_ok ? 'AHT20 ok' : 'AHT20 assente', s.aht_ok ? 'ok' : 'bad');
   if (!s.sgp_ok) setBadge($('sensor-sgp'), 'SGP30 assente', 'bad');
   else if (s.sgp_warming_up) setBadge($('sensor-sgp'), 'SGP30 in riscaldamento', 'warn');
@@ -96,48 +122,66 @@ function renderAlarm(a) {
   restTvoc = a.rest_tvoc_ppb;
   const banner = $('alarm-banner');
   if (a.state === 'alert') {
-    setBadge($('alarm-state'), 'ALLARME GAS', 'bad');
-    banner.textContent = `Allarme gas: TVOC ${a.ratio}× il valore a riposo (soglia ${a.ratio_on}×). Evento inviato al centro di controllo.`;
+    setBadge($('alarm-state'), 'Allarme gas', 'bad');
+    $('alarm-text').textContent = `TVOC ${a.ratio}× il valore a riposo (soglia ${a.ratio_on}×). Evento inviato al centro di controllo.`;
     banner.classList.remove('hidden');
   } else {
     banner.classList.add('hidden');
     if (a.state === 'learning') setBadge($('alarm-state'), 'Apprendimento valore a riposo…', 'warn');
     else setBadge($('alarm-state'), 'Gas nella norma', 'ok');
   }
-  $('rest').textContent = a.rest_tvoc_ppb === null ? '' : `A riposo: ${a.rest_tvoc_ppb} ppb · ora ${a.ratio ?? '—'}×`;
+  setTone($('kpi-gas-value'), a.state === 'alert' ? 'bad' : null);
+  $('rest').textContent = a.rest_tvoc_ppb === null ? 'Valore a riposo in apprendimento'
+    : `A riposo ${a.rest_tvoc_ppb} ppb · ora ${a.ratio ?? '—'}×`;
+}
+
+// --- Centro di controllo -------------------------------------------------------------------
+const SEVERITY = { info: ['Info', 'info'], warning: ['Avviso', 'warn'], critical: ['Critico', 'bad'] };
+
+function textEl(tag, className, text) {
+  const node = document.createElement(tag);
+  node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+function updateEventCount() {
+  const n = $('events').querySelectorAll('.evento').length;
+  $('events-count').textContent = n === 1 ? '1 evento' : `${n} eventi`;
 }
 
 function renderEmptyEvents() {
-  $('events').innerHTML = '<li class="empty muted">Nessun evento.</li>';
+  $('events').innerHTML = '<li class="empty">Nessun evento</li>';
+  updateEventCount();
 }
 
 function addEvent(e) {
   const list = $('events');
   list.querySelector('.empty')?.remove();
 
-  const li = document.createElement('li');
-  li.className = `event ${e.severity}`;
-  const meta = document.createElement('div');
-  meta.className = 'meta';
-  meta.textContent = `${e.time} · ${e.bin_id} · ${e.address} · ${e.type}`;
-  const title = document.createElement('div');
-  title.className = 'title';
-  title.textContent = e.title;
-  const message = document.createElement('p');
-  message.className = 'message';
-  message.textContent = e.message;
-  li.append(meta, title, message);
+  const [label, kind] = SEVERITY[e.severity] ?? SEVERITY.info;
+  const badge = document.createElement('span');
+  badge.dataset.dot = '';
+  setBadge(badge, label, kind);
 
+  const body = document.createElement('div');
+  body.className = 'evento-testo';
+  body.append(
+    textEl('p', 'evento-titolo', e.title),
+    textEl('p', 'evento-messaggio', e.message),
+    textEl('p', 'evento-meta', `${e.time} · ${e.type} · ${e.bin_id}`),
+  );
+
+  const li = document.createElement('li');
+  li.className = 'evento';
+  li.append(badge, body);
   list.prepend(li);
   while (list.children.length > MAX_EVENTS) list.lastChild.remove();
+  updateEventCount();
 }
 
-function drawCharts() {
-  drawSeries($('chart-tvoc'), history.map((s) => s.tvoc_ppb), css('--tvoc'), restTvoc);
-  drawSeries($('chart-eco2'), history.map((s) => s.eco2_ppm), css('--eco2'), null);
-}
-
-function drawSeries(canvas, values, color, refLine) {
+// --- Grafici (geometria del kit: tratto 2 px, riferimento tratteggiato 4-3, sfumatura 16% -> 0) --
+function prepareCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
@@ -146,13 +190,55 @@ function drawSeries(canvas, values, color, refLine) {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, width, height);
+  return { ctx, width, height };
+}
 
-  const pad = { left: 44, right: 8, top: 8, bottom: 8 };
+function noData(ctx, text, x, y) {
+  ctx.fillStyle = css('--muted-foreground');
+  ctx.font = chartFont();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+
+function hline(ctx, x0, x1, y, color, width = 1) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(x0, Math.round(y) + 0.5);
+  ctx.lineTo(x1, Math.round(y) + 0.5);
+  ctx.stroke();
+}
+
+// Colore del token con trasparenza, per la sfumatura sotto la linea
+function withAlpha(color, alpha) {
+  const hex = color.replace('#', '');
+  if (/^[0-9a-f]{3}$|^[0-9a-f]{6}$/i.test(hex)) {
+    const full = hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex;
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return `color-mix(in srgb, ${color} ${alpha * 100}%, transparent)`;
+}
+
+function areaGradient(ctx, color, top, bottom) {
+  const gradient = ctx.createLinearGradient(0, top, 0, bottom);
+  gradient.addColorStop(0, withAlpha(color, 0.16));
+  gradient.addColorStop(1, withAlpha(color, 0));
+  return gradient;
+}
+
+function drawCharts() {
+  drawSeries($('chart-tvoc'), history.map((s) => s.tvoc_ppb), css('--chart-1'), restTvoc);
+  drawSeries($('chart-eco2'), history.map((s) => s.eco2_ppm), css('--chart-slate'), null);
+}
+
+function drawSeries(canvas, values, color, refLine) {
+  const { ctx, width, height } = prepareCanvas(canvas);
+  const pad = { left: 44, right: 8, top: 10, bottom: 10 };
   const valid = values.filter((v) => v !== null && v !== undefined);
   if (valid.length < 2) {
-    ctx.fillStyle = css('--muted');
-    ctx.font = '12px system-ui';
-    ctx.fillText('In attesa di dati…', pad.left, height / 2);
+    noData(ctx, 'In attesa di dati…', pad.left, height / 2);
     return;
   }
 
@@ -163,32 +249,48 @@ function drawSeries(canvas, values, color, refLine) {
   const y = (v) => pad.top + (1 - (v - min) / (max - min)) * (height - pad.top - pad.bottom);
   const offset = HISTORY_SIZE - values.length;
 
-  ctx.fillStyle = css('--muted');
-  ctx.font = '11px system-ui';
+  ctx.font = chartFont();
   ctx.textAlign = 'right';
-  ctx.fillText(String(Math.round(max)), pad.left - 6, pad.top + 10);
-  ctx.fillText(String(Math.round(min)), pad.left - 6, height - pad.bottom);
+  ctx.textBaseline = 'middle';
+  for (const v of [max, min]) {
+    hline(ctx, pad.left, width - pad.right, y(v), css('--chart-grid'));
+    ctx.fillStyle = css('--chart-axis');
+    ctx.fillText(String(Math.round(v)), pad.left - 6, y(v));
+  }
 
   if (refLine !== null && refLine !== undefined) {
-    ctx.strokeStyle = css('--muted');
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(pad.left, y(refLine));
-    ctx.lineTo(width - pad.right, y(refLine));
-    ctx.stroke();
+    ctx.setLineDash([4, 3]);
+    hline(ctx, pad.left, width - pad.right, y(refLine), css('--chart-reference'), 1.25);
     ctx.setLineDash([]);
   }
 
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  let drawing = false;
+  // Tratti continui (i valori mancanti spezzano la linea), ciascuno con la sua sfumatura
+  const segments = [];
+  let current = null;
   values.forEach((v, i) => {
-    if (v === null || v === undefined) { drawing = false; return; }
-    if (drawing) ctx.lineTo(x(i + offset), y(v));
-    else { ctx.moveTo(x(i + offset), y(v)); drawing = true; }
+    if (v === null || v === undefined) { current = null; return; }
+    if (!current) { current = []; segments.push(current); }
+    current.push([x(i + offset), y(v)]);
   });
-  ctx.stroke();
+  const fill = areaGradient(ctx, color, pad.top, height - pad.bottom);
+  for (const seg of segments) {
+    if (seg.length < 2) continue;
+    ctx.beginPath();
+    ctx.moveTo(seg[0][0], height - pad.bottom);
+    seg.forEach(([px, py]) => ctx.lineTo(px, py));
+    ctx.lineTo(seg[seg.length - 1][0], height - pad.bottom);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    seg.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
+    ctx.stroke();
+  }
 }
 
 window.addEventListener('resize', () => { drawCharts(); drawFillChart(); });
@@ -215,25 +317,31 @@ function renderFill(f) {
   fill = f;
   const last = f.last;
   const level = last ? last.level : 'unknown';
-  const pct = last ? Math.max(0, Math.min(100, last.fill_pct)) : 0;
+  const kind = LEVELS[level][1];
+  const pct = last ? clampPct(last.fill_pct) : 0;
 
   $('fill-pct').textContent = last ? num(last.fill_pct, 0) : '—';
+  setTone($('kpi-fill-value'), kind);
+  $('fill-updated').textContent = last ? `Misura di ${dateTimeFmt.format(last.ts * 1000)}` : 'Nessuna misura';
+
   const meter = $('fill-meter');
-  meter.className = `bin-meter ${level}`;
   meter.setAttribute('aria-valuenow', String(Math.round(pct)));
   meter.setAttribute('aria-valuetext', last ? `${num(last.fill_pct, 0)}%, ${LEVELS[level][0]}` : 'nessuna misura');
-  $('fill-meter-fill').style.height = `${pct}%`;
-  $('fill-meter-warn').style.bottom = `${f.thresholds.warn}%`;
-  setBadge($('fill-badge'), LEVELS[level][0], LEVELS[level][1]);
-  $('fill-updated').textContent = last ? `Ultima misura: ${dateTimeFmt.format(last.ts * 1000)}` : 'Nessuna misura';
-  $('fill-peak').textContent = last ? num(last.peak_pct, 0) : '—';
+  const bar = $('fill-meter-fill');
+  bar.style.width = `${pct}%`;
+  setTone(bar, kind);
+  $('fill-meter-warn').style.left = `${f.thresholds.warn}%`;
+  $('fill-meter-value').textContent = last ? `${num(last.fill_pct, 0)}%` : '—';
+  setBadge($('fill-badge'), LEVELS[level][0], kind);
+  $('fill-peak').textContent = last ? `${num(last.peak_pct, 0)}%` : '—';
+  $('peak-meter-fill').style.width = `${last ? clampPct(last.peak_pct) : 0}%`;
 
   const p = f.prediction;
   $('fill-rate').textContent = p ? num(p.rate_pct_day, 0) : '—';
   $('fill-method').textContent = p ? `%/giorno · ${METHODS[p.method] ?? p.method}` : '%/giorno';
 
   const st = f.stats;
-  $('fill-at-empty').textContent = num(st.avg_fill_at_emptying_pct, 0);
+  $('fill-at-empty').textContent = st.avg_fill_at_emptying_pct == null ? '—' : `${num(st.avg_fill_at_emptying_pct, 0)}%`;
   $('fill-sim').classList.toggle('hidden', !st.simulated);
   const parts = [];
   if (st.emptyings) {
@@ -309,22 +417,13 @@ function renderFillTable() {
 
 function drawFillChart() {
   const canvas = $('chart-fill');
-  const dpr = window.devicePixelRatio || 1;
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, width, height);
+  const { ctx, width, height } = prepareCanvas(canvas);
 
   const pts = fill?.chart ?? [];
   const pad = { left: 44, right: 16, top: 12, bottom: 26 };
   if (pts.length < 2) {
     fillGeom = null;
-    ctx.fillStyle = css('--muted');
-    ctx.font = '12px system-ui';
-    ctx.fillText('In attesa di misure…', pad.left, height / 2);
+    noData(ctx, 'In attesa di misure…', pad.left, height / 2);
     return;
   }
 
@@ -338,31 +437,23 @@ function drawFillChart() {
   const y = (v) => pad.top + (1 - v / 100) * (height - pad.top - pad.bottom);
   fillGeom = { x, y, t0, tEnd, tLast, pad, width, height, projecting };
 
-  // Griglia: linee sottili e continue; etichette con i colori del testo.
-  ctx.font = '11px system-ui';
-  ctx.lineWidth = 1;
+  // Griglia e assi con i token chart-grid e chart-axis
+  ctx.font = chartFont();
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
   for (const v of [0, 50, 100]) {
-    ctx.strokeStyle = css('--grid');
-    ctx.beginPath();
-    ctx.moveTo(pad.left, Math.round(y(v)) + 0.5);
-    ctx.lineTo(width - pad.right, Math.round(y(v)) + 0.5);
-    ctx.stroke();
-    ctx.fillStyle = css('--muted');
+    hline(ctx, pad.left, width - pad.right, y(v), css('--chart-grid'));
+    ctx.fillStyle = css('--chart-axis');
     ctx.fillText(`${v}%`, pad.left - 6, y(v));
   }
-  // Soglia "quasi pieno"
+  // Soglia "quasi pieno": uno stato, quindi il token warning
   const warn = fill.thresholds.warn;
-  ctx.strokeStyle = css('--warning');
-  ctx.beginPath();
-  ctx.moveTo(pad.left, Math.round(y(warn)) + 0.5);
-  ctx.lineTo(width - pad.right, Math.round(y(warn)) + 0.5);
-  ctx.stroke();
+  hline(ctx, pad.left, width - pad.right, y(warn), css('--warning'), 1.25);
 
   // Asse dei tempi: una tacca a mezzanotte ogni 7 giorni
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
+  ctx.fillStyle = css('--chart-axis');
   const first = new Date(t0 * 1000);
   first.setHours(24, 0, 0, 0);
   for (let d = new Date(first); d.getTime() / 1000 < tEnd; d.setDate(d.getDate() + 7)) {
@@ -371,19 +462,17 @@ function drawFillChart() {
     ctx.fillText(shortDayFmt.format(d), tx, height - pad.bottom + 6);
   }
 
-  const color = css('--fill');
-  // Velatura sotto la linea (10%)
+  const color = css('--chart-1');
+  // Sfumatura sotto la linea (16% -> 0)
   ctx.beginPath();
   ctx.moveTo(x(pts[0][0]), y(0));
   pts.forEach(([t, v]) => ctx.lineTo(x(t), y(v)));
   ctx.lineTo(x(tLast), y(0));
   ctx.closePath();
-  ctx.globalAlpha = 0.1;
-  ctx.fillStyle = color;
+  ctx.fillStyle = areaGradient(ctx, color, pad.top, y(0));
   ctx.fill();
-  ctx.globalAlpha = 1;
 
-  // Linea misurata (2px)
+  // Linea misurata (2 px)
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.lineJoin = 'round';
@@ -395,28 +484,28 @@ function drawFillChart() {
   const lastV = pts[pts.length - 1][1];
   if (projecting) {
     // Previsione: tratteggio dall'ultima misura fino al 100%
-    ctx.setLineDash([5, 4]);
+    ctx.setLineDash([4, 3]);
     ctx.beginPath();
     ctx.moveTo(x(tLast), y(lastV));
     ctx.lineTo(x(p.full_at), y(100));
     ctx.stroke();
     ctx.setLineDash([]);
     dot(ctx, x(p.full_at), y(100), color);
-    // Etichetta solo se c'e' spazio: su schermi stretti la data resta nel riquadro "Pieno tra".
+    // Etichetta solo se c'e' spazio: su schermi stretti la data resta nella KPI "Pieno tra".
     if (width >= 560) {
       label(ctx, `pieno ${dateTimeFmt.format(p.full_at * 1000)}`, x(p.full_at) - 12, y(100),
-        'right', 'middle', css('--text'));
+        'right', 'middle', css('--foreground'));
     }
   }
   dot(ctx, x(tLast), y(lastV), color);
   // Etichetta della soglia dopo i dati, cosi' resta leggibile sopra la linea
-  label(ctx, `quasi pieno (${warn}%)`, pad.left + 4, y(warn) - 2, 'left', 'bottom', css('--muted'));
+  label(ctx, `quasi pieno (${warn}%)`, pad.left + 4, y(warn) - 2, 'left', 'bottom', css('--chart-axis'));
 
   // Evidenziazione (mouse o tastiera): linea verticale sul punto piu' vicino
   if (fillHover !== null) {
     const isProj = fillHover === 'proj';
     const [t, v] = isProj ? [p.full_at, 100] : pts[fillHover];
-    ctx.strokeStyle = css('--muted');
+    ctx.strokeStyle = css('--chart-context');
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(Math.round(x(t)) + 0.5, pad.top);
@@ -426,27 +515,28 @@ function drawFillChart() {
   }
 }
 
-// Testo nel grafico con uno sfondo del colore della superficie, cosi' le linee non lo attraversano.
+// Testo nel grafico con uno sfondo del colore della carta, cosi' le linee non lo attraversano.
 function label(ctx, text, lx, ly, align, baseline, color) {
-  ctx.font = '11px system-ui';
+  ctx.font = chartFont();
   ctx.textAlign = align;
   ctx.textBaseline = baseline;
   const w = ctx.measureText(text).width;
   const left = align === 'right' ? lx - w : align === 'center' ? lx - w / 2 : lx;
   const top = baseline === 'bottom' ? ly - 13 : baseline === 'middle' ? ly - 7 : ly - 1;
-  ctx.fillStyle = css('--surface');
+  ctx.fillStyle = css('--card');
   ctx.fillRect(left - 3, top, w + 6, 14);
   ctx.fillStyle = color;
   ctx.fillText(text, lx, ly);
 }
 
+// Punto attivo del kit: raggio 3,5 px con alone di 2 px nel colore della carta
 function dot(ctx, cx, cy, color) {
   ctx.beginPath();
-  ctx.arc(cx, cy, 6, 0, Math.PI * 2);   // anello di 2px nel colore della superficie
-  ctx.fillStyle = css('--surface');
+  ctx.arc(cx, cy, 5.5, 0, Math.PI * 2);
+  ctx.fillStyle = css('--card');
   ctx.fill();
   ctx.beginPath();
-  ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+  ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
 }
@@ -478,12 +568,12 @@ function showFillTooltip() {
     const line = document.createElement('div');
     if (i === 0) {
       const key = document.createElement('span');
-      key.className = fillHover === 'proj' ? 'key key-dash' : 'key';
+      key.className = fillHover === 'proj' ? 'key key-dash key-serie' : 'key';
       line.append(key);
     }
-    const el = document.createElement(tag);
-    el.textContent = text;
-    line.append(el);
+    const node = document.createElement(tag);
+    node.textContent = text;
+    line.append(node);
     tip.append(line);
   });
   tip.classList.remove('hidden');
@@ -540,3 +630,53 @@ fillCanvas.addEventListener('keydown', (ev) => {
   ev.preventDefault();
   setFillHover(next === n ? 'proj' : next);
 });
+
+// --- Tema chiaro/scuro (ThemeToggle del kit) ------------------------------------------------
+const themeButton = $('theme-toggle');
+
+function syncThemeButton() {
+  const dark = document.documentElement.classList.contains('dark');
+  themeButton.setAttribute('aria-label', dark ? 'Tema chiaro' : 'Tema scuro');
+  themeButton.querySelector('use').setAttribute('href', dark ? '#i-sun' : '#i-moon');
+}
+
+function applyTheme(dark) {
+  document.documentElement.classList.toggle('dark', dark);
+  syncThemeButton();
+  drawCharts();
+  drawFillChart();
+}
+
+themeButton.addEventListener('click', () => {
+  const dark = !document.documentElement.classList.contains('dark');
+  try { localStorage.setItem('tema', dark ? 'scuro' : 'chiaro'); } catch (e) { /* solo per questa visita */ }
+  applyTheme(dark);
+});
+
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (ev) => {
+  let saved = null;
+  try { saved = localStorage.getItem('tema'); } catch (e) { /* nessuna scelta salvata */ }
+  if (!saved) applyTheme(ev.matches);
+});
+syncThemeButton();
+
+// --- Sezione attiva nella navigazione (binario laterale e barra in basso) --------------------
+const SECTIONS = ['riempimento', 'odore', 'sensori', 'eventi'];
+const navLinks = [...document.querySelectorAll('[data-nav]')];
+
+// Attiva l'ultima sezione il cui inizio ha superato il 40% dello schermo; in fondo, l'ultima.
+function updateActiveNav() {
+  const line = window.innerHeight * 0.4;
+  let current = SECTIONS[0];
+  for (const id of SECTIONS) if ($(id).getBoundingClientRect().top <= line) current = id;
+  const root = document.documentElement;
+  if (window.innerHeight + window.scrollY >= root.scrollHeight - 2) current = SECTIONS[SECTIONS.length - 1];
+  navLinks.forEach((a) => a.setAttribute('aria-current', String(a.dataset.nav === current)));
+}
+
+window.addEventListener('scroll', updateActiveNav, { passive: true });
+window.addEventListener('resize', updateActiveNav);
+updateActiveNav();
+
+// I grafici si ridisegnano quando arriva il carattere Geist, per usarlo anche nelle etichette
+document.fonts?.ready.then(() => { drawCharts(); drawFillChart(); });

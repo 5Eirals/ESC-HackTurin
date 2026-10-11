@@ -66,9 +66,10 @@ ESC-HackTurin/                   (repository di TO-Breath)
 │   ├── simulate_fill.py         genera un mese di misure inventate per demo e prove
 │   └── depth_anything_v2_vits_252.onnx   modello di profondità (ViT-S, ingresso 252×252)
 ├── assets/                      dashboard web servita dal brick WebUI
-│   ├── index.html               struttura della pagina
+│   ├── index.html               struttura della pagina (shell, intestazione, bande)
 │   ├── app.js                   rendering di letture, grafici, previsione ed eventi
-│   ├── style.css                stile (tema chiaro e scuro)
+│   ├── style.css                impaginazione propria della dashboard
+│   ├── ds/                      design system IAMAimpresa (token e componenti, da non modificare)
 │   └── libs/                    socket.io e client WebUI di Arduino
 ├── AI_Depth_Analysis/           riferimento al repository originale di Depth-Anything-V2
 │                                (non usato a runtime: l'app usa il modello ONNX in python/)
@@ -151,11 +152,15 @@ Calcola anche le **statistiche degli ultimi 30 giorni**: numero di svuotamenti, 
 
 ### 6. Dashboard e centro di controllo (`assets/`)
 
-La dashboard (porta 7000) ha tre sezioni:
+La dashboard (porta 7000) usa il design system di IAMAimpresa Kit: i token (`assets/ds/tokens.css`) e i componenti (`assets/ds/components.css`) sono riscritti in CSS semplice, perché il brick WebUI serve file statici e non un'app Next.js. Barra laterale con le sezioni (sui telefoni una barra in basso), tema chiaro e scuro, e dall'alto in basso:
 
-- **Livello di riempimento**: livello attuale con un indicatore a forma di cassonetto (verde, arancione dall'80%, rosso dal 95%), conto alla rovescia al pieno con data e ora, ritmo previsto (%/giorno), picchi, livello medio alla raccolta, grafico degli ultimi 30 giorni con la previsione tratteggiata (valori leggibili col mouse o con le frecce della tastiera), statistiche e tabella giornaliera;
+- **Riepilogo**: riempimento, tempo al pieno, odore percepito e TVOC; il numero si colora di arancione o rosso negli stati di attenzione;
+- **Riempimento, ultimi 30 giorni**: grafico con la previsione tratteggiata e la soglia di quasi pieno (valori leggibili col mouse o con le frecce della tastiera) e statistiche;
+- **Livello** e **Odore percepito**: barre di livello e picchi (con la tacca dell'80%), ritmo previsto, livello medio alla raccolta, tabella giornaliera; quota di tempo sopra la soglia d'odore, rapporto H₂/etanolo, riferimento e il pulsante «Segna come svuotato»;
 - **Letture in tempo reale**: TVOC, eCO₂, temperatura, umidità, H₂ ed etanolo grezzi, stato dei sensori e dell'allarme, grafici degli ultimi 10 minuti;
 - **Centro di controllo (simulato)**: gli eventi che il cassonetto invia all'azienda di raccolta.
+
+Il design system è di IAMAimpresa ed è concesso ai partecipanti solo per l'evento (IAMAimpresa Hackathon Source License 1.0): niente uso commerciale e niente pubblicazione dei derivati.
 
 | Evento | Gravità | Quando |
 | :--- | :--- | :--- |

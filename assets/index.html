@@ -2,122 +2,261 @@
 <html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>TO-Breath · Cassonetto smart</title>
+    <script>
+      // Tema prima del primo disegno: la scelta salvata, altrimenti quella del sistema.
+      (function () {
+        var saved = null;
+        try { saved = localStorage.getItem('tema'); } catch (e) {}
+        var dark = saved ? saved === 'scuro' : matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', dark);
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap" />
+    <link rel="stylesheet" href="ds/tokens.css" />
+    <link rel="stylesheet" href="ds/components.css" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <header>
-      <div>
-        <p class="brand">TO-Breath</p>
-        <h1>Cassonetto <span id="bin-id">—</span></h1>
-        <p id="bin-address" class="muted">—</p>
+    <!-- Icone Lucide (ISC), come nel kit IAMAimpresa -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-bin" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" /></symbol>
+      <symbol id="i-wind" viewBox="0 0 24 24"><path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2" /><path d="M9.6 4.6A2 2 0 1 1 11 8H2" /><path d="M12.6 19.4A2 2 0 1 0 14 16H2" /></symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+    </svg>
+
+    <div class="shell">
+      <aside class="shell-rail">
+        <div class="shell-rail-inner">
+          <div class="rail-brand">
+            <span class="rail-mark" aria-hidden="true"><svg class="icon"><use href="#i-wind" /></svg></span>
+            TO-Breath
+          </div>
+          <p class="rail-group">Cassonetto</p>
+          <nav class="rail-nav" aria-label="Sezioni">
+            <a class="rail-item" href="#riempimento" data-nav="riempimento"><svg class="icon" aria-hidden="true"><use href="#i-bin" /></svg>Riempimento</a>
+            <a class="rail-item" href="#odore" data-nav="odore"><svg class="icon" aria-hidden="true"><use href="#i-wind" /></svg>Odore</a>
+            <a class="rail-item" href="#sensori" data-nav="sensori"><svg class="icon" aria-hidden="true"><use href="#i-activity" /></svg>Sensori</a>
+            <a class="rail-item" href="#eventi" data-nav="eventi"><svg class="icon" aria-hidden="true"><use href="#i-bell" /></svg>Centro di controllo</a>
+          </nav>
+        </div>
+      </aside>
+
+      <div class="shell-main">
+        <header class="shell-header">
+          <nav class="crumbs" aria-label="Percorso">
+            <span>TO-Breath</span>
+            <svg class="icon" aria-hidden="true" style="width: 0.875rem; height: 0.875rem"><use href="#i-chevron" /></svg>
+            <span aria-current="page">Cassonetto</span>
+          </nav>
+          <div class="header-actions">
+            <button type="button" id="theme-toggle" class="btn btn-ghost btn-icon-sm" aria-label="Tema scuro">
+              <svg class="icon" aria-hidden="true"><use href="#i-moon" /></svg>
+            </button>
+          </div>
+        </header>
+
+        <main class="shell-content">
+          <div class="page-header">
+            <div class="page-header-text">
+              <div class="page-title-row">
+                <h1 class="page-title">Cassonetto <span id="bin-id">—</span></h1>
+                <span id="connection" class="status status-muted" data-dot>Disconnesso</span>
+              </div>
+              <p class="page-meta">
+                <span id="bin-address">—</span>
+                <span aria-hidden="true">·</span>
+                <span id="last-update">Nessuna lettura</span>
+              </p>
+            </div>
+          </div>
+
+          <div id="alarm-banner" class="avviso avviso-destructive hidden" role="alert">
+            <svg class="icon" aria-hidden="true"><use href="#i-alert" /></svg>
+            <div>
+              <p class="avviso-title">Allarme gas</p>
+              <p id="alarm-text"></p>
+            </div>
+          </div>
+
+          <!-- Banda 1: i numeri -->
+          <section class="kpi-grid" aria-label="Riepilogo">
+            <div class="card kpi">
+              <p class="kpi-title">Riempimento</p>
+              <div class="kpi-value" id="kpi-fill-value"><span class="kpi-num" id="fill-pct">—</span><span class="kpi-num">%</span></div>
+              <p class="kpi-hint" id="fill-updated">Nessuna misura</p>
+            </div>
+            <div class="card kpi">
+              <p class="kpi-title">Pieno tra</p>
+              <div class="kpi-value"><span class="kpi-num" id="fill-eta">—</span></div>
+              <p class="kpi-hint" id="fill-eta-date">—</p>
+            </div>
+            <div class="card kpi">
+              <p class="kpi-title">Odore percepito</p>
+              <div class="kpi-value" id="kpi-odor-value"><span class="kpi-num" id="odor-ratio">—</span></div>
+              <p class="kpi-hint" id="odor-level-text">Rispetto all'aria dopo lo svuotamento</p>
+            </div>
+            <div class="card kpi">
+              <p class="kpi-title">TVOC</p>
+              <div class="kpi-value" id="kpi-gas-value"><span class="kpi-num" id="kpi-tvoc">—</span><span class="kpi-num">ppb</span></div>
+              <p class="kpi-hint" id="rest">—</p>
+            </div>
+          </section>
+
+          <!-- Banda 2: il grafico del riempimento -->
+          <section class="card" id="riempimento" aria-labelledby="fill-title">
+            <div class="card-head">
+              <div class="card-head-text">
+                <p class="card-title" id="fill-title">Riempimento, ultimi 30 giorni</p>
+                <p class="card-sub" id="fill-stats"></p>
+              </div>
+              <div class="legend">
+                <span class="legend-pill"><span class="key"></span>Misurato</span>
+                <span class="legend-pill"><span class="key key-dash key-serie"></span>Previsione</span>
+                <span class="legend-pill"><span class="key key-warning"></span>Quasi pieno</span>
+                <span id="fill-sim" class="status status-warning hidden">Dati simulati</span>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="chart-fill" class="chart-canvas chart-tall" tabindex="0" aria-label="Grafico del riempimento negli ultimi 30 giorni con la previsione fino al pieno. Usa le frecce per scorrere le misure; i valori sono anche nella tabella giornaliera."></canvas>
+              <div id="fill-tooltip" class="chart-tip hidden" role="status"></div>
+            </div>
+          </section>
+
+          <!-- Banda 3: dettagli di riempimento e odore -->
+          <div class="band-pair">
+            <section class="card section-card" aria-labelledby="level-title">
+              <div class="card-head">
+                <p class="card-title" id="level-title">Livello</p>
+                <span id="fill-badge" class="status status-muted">—</span>
+              </div>
+              <div class="meters">
+                <div class="meter-row">
+                  <span class="meter-label">Riempimento</span>
+                  <span class="meter-bar" id="fill-meter" role="meter" aria-labelledby="level-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <span class="meter-fill" id="fill-meter-fill"></span>
+                    <span class="meter-tick" id="fill-meter-warn" title="Soglia quasi pieno"></span>
+                  </span>
+                  <span class="meter-value" id="fill-meter-value">—</span>
+                </div>
+                <div class="meter-row">
+                  <span class="meter-label">Picchi</span>
+                  <span class="meter-bar"><span class="meter-fill" id="peak-meter-fill"></span></span>
+                  <span class="meter-value" id="fill-peak">—</span>
+                </div>
+              </div>
+              <dl class="dettagli">
+                <div><dt>Ritmo previsto</dt><dd><span id="fill-rate">—</span> <span class="muted" id="fill-method">%/giorno</span></dd></div>
+                <div><dt>Media alla raccolta</dt><dd id="fill-at-empty">—</dd></div>
+              </dl>
+              <details class="ripiegabile">
+                <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron" /></svg>Tabella giornaliera</summary>
+                <div class="table-scroll">
+                  <table class="data-table">
+                    <thead><tr><th scope="col">Giorno</th><th scope="col">Massimo</th><th scope="col">Fine giornata</th><th scope="col">Svuotato</th></tr></thead>
+                    <tbody id="fill-table"></tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
+
+            <section class="card section-card" id="odore" aria-labelledby="odor-title">
+              <div class="card-head">
+                <p class="card-title" id="odor-title">
+                  Odore percepito
+                  <span class="info-dot" tabindex="0" role="note" aria-label="Come si misura" data-tip="Sensore fuori dal cassonetto: mediana degli ultimi 30 minuti rispetto all'aria misurata dopo l'ultimo svuotamento.">i</span>
+                </p>
+                <span id="odor-badge" class="status status-muted">—</span>
+              </div>
+              <div class="meters">
+                <div class="meter-row">
+                  <span class="meter-label">Sopra soglia</span>
+                  <span class="meter-bar"><span class="meter-fill" id="odor-persistence-fill"></span></span>
+                  <span class="meter-value" id="odor-persistence">—</span>
+                </div>
+              </div>
+              <dl class="dettagli">
+                <div><dt>H₂ / etanolo</dt><dd><span id="odor-split">—</span> <span class="muted">volte il riferimento</span></dd></div>
+                <div><dt>Riferimento</dt><dd id="odor-reference">—</dd></div>
+              </dl>
+              <div class="card-foot">
+                <button type="button" id="odor-reset" class="btn btn-outline btn-sm">
+                  <svg class="icon" aria-hidden="true"><use href="#i-reset" /></svg>Segna come svuotato
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <!-- Banda 4: sensori in tempo reale -->
+          <section class="card section-card" id="sensori" aria-labelledby="live-title">
+            <div class="card-head">
+              <p class="card-title" id="live-title">Letture in tempo reale</p>
+              <div class="badges">
+                <span id="sensor-aht" class="status status-muted" data-dot>AHT20</span>
+                <span id="sensor-sgp" class="status status-muted" data-dot>SGP30</span>
+                <span id="alarm-state" class="status status-muted">Allarme —</span>
+              </div>
+            </div>
+            <dl class="letture">
+              <div><dt>TVOC</dt><dd><span id="tvoc">—</span> <span class="muted">ppb</span></dd></div>
+              <div><dt>eCO₂</dt><dd><span id="eco2">—</span> <span class="muted">ppm</span></dd></div>
+              <div><dt>Temperatura</dt><dd><span id="temp">—</span> <span class="muted">°C</span></dd></div>
+              <div><dt>Umidità</dt><dd><span id="rh">—</span> <span class="muted">%</span></dd></div>
+              <div><dt>H₂ grezzo</dt><dd><span id="h2">—</span> <span class="muted">a.u.</span></dd></div>
+              <div><dt>Etanolo grezzo</dt><dd><span id="ethanol">—</span> <span class="muted">a.u.</span></dd></div>
+            </dl>
+          </section>
+
+          <div class="band-pair">
+            <section class="card" aria-labelledby="tvoc-title">
+              <div class="card-head">
+                <p class="card-title" id="tvoc-title">TVOC, ultimi 10 minuti</p>
+                <div class="legend">
+                  <span class="legend-pill"><span class="key"></span>TVOC</span>
+                  <span class="legend-pill"><span class="key key-dash"></span>A riposo</span>
+                </div>
+              </div>
+              <canvas id="chart-tvoc" class="chart-canvas"></canvas>
+            </section>
+            <section class="card" aria-labelledby="eco2-title">
+              <div class="card-head">
+                <p class="card-title" id="eco2-title">eCO₂, ultimi 10 minuti</p>
+                <div class="legend"><span class="legend-pill"><span class="key key-slate"></span>eCO₂</span></div>
+              </div>
+              <canvas id="chart-eco2" class="chart-canvas"></canvas>
+            </section>
+          </div>
+
+          <!-- Banda 5: eventi verso il centro di controllo -->
+          <section class="card section-card" id="eventi" aria-labelledby="cc-title">
+            <div class="card-head">
+              <p class="card-title" id="cc-title">
+                Centro di controllo
+                <span class="info-dot" tabindex="0" role="note" aria-label="Che cosa contiene" data-tip="Eventi inviati dal cassonetto all'azienda di raccolta rifiuti (simulata).">i</span>
+              </p>
+              <span id="events-count" class="status status-muted">0 eventi</span>
+            </div>
+            <ul id="events" class="eventi"><li class="empty">Nessun evento</li></ul>
+          </section>
+        </main>
       </div>
-      <span id="connection" class="badge badge-off">Disconnesso</span>
-    </header>
+    </div>
 
-    <div id="alarm-banner" class="banner hidden" role="alert"></div>
-
-    <main>
-      <section aria-labelledby="fill-title" class="fill">
-        <div class="section-head">
-          <h2 id="fill-title">Livello di riempimento</h2>
-          <span id="fill-sim" class="badge badge-warn hidden">Dati simulati</span>
-        </div>
-
-        <div class="fill-top">
-          <div class="fill-hero">
-            <div class="bin-meter" id="fill-meter" role="meter" aria-labelledby="fill-title"
-                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-              <div class="bin-meter-fill" id="fill-meter-fill"></div>
-              <div class="bin-meter-mark" id="fill-meter-warn" title="Soglia quasi pieno"></div>
-            </div>
-            <div class="fill-hero-text">
-              <div><span class="hero" id="fill-pct">—</span><span class="hero-unit">%</span></div>
-              <span id="fill-badge" class="badge">—</span>
-              <p class="muted" id="fill-updated">Nessuna misura</p>
-            </div>
-          </div>
-
-          <div class="tiles fill-tiles">
-            <div class="tile"><span class="label">Pieno tra</span><span class="value" id="fill-eta">—</span><span class="unit" id="fill-eta-date">—</span></div>
-            <div class="tile"><span class="label">Ritmo previsto</span><span class="value" id="fill-rate">—</span><span class="unit" id="fill-method">%/giorno</span></div>
-            <div class="tile"><span class="label">Picchi (cumuli)</span><span class="value" id="fill-peak">—</span><span class="unit">%</span></div>
-            <div class="tile"><span class="label">Media alla raccolta</span><span class="value" id="fill-at-empty">—</span><span class="unit">% di riempimento, 30 giorni</span></div>
-          </div>
-        </div>
-
-        <div class="chart">
-          <div class="chart-head">
-            <h3>Riempimento, ultimi 30 giorni</h3>
-            <span class="legend"><span class="key key-line"></span>misurato <span class="key key-dash"></span>previsione</span>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="chart-fill" tabindex="0" aria-label="Grafico del riempimento negli ultimi 30 giorni con la previsione fino al pieno. Usa le frecce per scorrere le misure; i valori sono anche nella tabella sotto."></canvas>
-            <div id="fill-tooltip" class="tooltip hidden" role="status"></div>
-          </div>
-        </div>
-        <p class="status-line muted" id="fill-stats"></p>
-
-        <details class="table-view">
-          <summary>Tabella giornaliera</summary>
-          <table>
-            <thead><tr><th scope="col">Giorno</th><th scope="col">Massimo</th><th scope="col">Fine giornata</th><th scope="col">Svuotato</th></tr></thead>
-            <tbody id="fill-table"></tbody>
-          </table>
-        </details>
-      </section>
-
-      <section aria-labelledby="odor-title" class="odor">
-        <div class="section-head">
-          <h2 id="odor-title">Odore percepito</h2>
-          <span id="odor-badge" class="badge">—</span>
-        </div>
-        <p class="muted">Sensore fuori dal cassonetto: mediana degli ultimi 30 minuti rispetto all'aria misurata dopo l'ultimo svuotamento.</p>
-        <div class="tiles">
-          <div class="tile"><span class="label">Aria rispetto al riferimento</span><span class="value" id="odor-ratio">—</span><span class="unit">volte</span></div>
-          <div class="tile"><span class="label">Sopra soglia</span><span class="value" id="odor-persistence">—</span><span class="unit">% degli ultimi 30 min</span></div>
-          <div class="tile"><span class="label">H₂ / etanolo</span><span class="value" id="odor-split">—</span><span class="unit">volte il riferimento</span></div>
-        </div>
-        <p class="status-line">
-          <span id="odor-reference" class="muted">—</span>
-          <button type="button" id="odor-reset" class="button">Cassonetto appena svuotato</button>
-        </p>
-      </section>
-
-      <section aria-labelledby="live-title">
-        <h2 id="live-title">Letture in tempo reale</h2>
-        <div class="tiles">
-          <div class="tile"><span class="label">TVOC</span><span class="value" id="tvoc">—</span><span class="unit">ppb</span></div>
-          <div class="tile"><span class="label">eCO₂</span><span class="value" id="eco2">—</span><span class="unit">ppm</span></div>
-          <div class="tile"><span class="label">Temperatura</span><span class="value" id="temp">—</span><span class="unit">°C</span></div>
-          <div class="tile"><span class="label">Umidità</span><span class="value" id="rh">—</span><span class="unit">%</span></div>
-          <div class="tile"><span class="label">H₂ (grezzo)</span><span class="value" id="h2">—</span><span class="unit">a.u.</span></div>
-          <div class="tile"><span class="label">Etanolo (grezzo)</span><span class="value" id="ethanol">—</span><span class="unit">a.u.</span></div>
-        </div>
-        <p class="status-line">
-          <span id="sensor-aht" class="badge">AHT20 —</span>
-          <span id="sensor-sgp" class="badge">SGP30 —</span>
-          <span id="alarm-state" class="badge">Allarme —</span>
-          <span id="rest" class="muted"></span>
-        </p>
-
-        <div class="chart">
-          <div class="chart-head"><h3>TVOC (ultimi 10 minuti)</h3><span class="muted">tratteggio = valore a riposo</span></div>
-          <canvas id="chart-tvoc" height="160"></canvas>
-        </div>
-        <div class="chart">
-          <div class="chart-head"><h3>eCO₂ (ultimi 10 minuti)</h3></div>
-          <canvas id="chart-eco2" height="160"></canvas>
-        </div>
-      </section>
-
-      <section aria-labelledby="cc-title" class="control-center">
-        <h2 id="cc-title">Centro di controllo <small>(simulato)</small></h2>
-        <p class="muted">Eventi inviati dal cassonetto all'azienda di raccolta rifiuti.</p>
-        <ul id="events" class="events"><li class="empty muted">Nessun evento.</li></ul>
-      </section>
-    </main>
+    <nav class="tabbar" aria-label="Navigazione rapida">
+      <a class="tab" href="#riempimento" data-nav="riempimento"><span class="tab-icon"><svg class="icon" aria-hidden="true"><use href="#i-bin" /></svg></span><span class="tab-label">Riempimento</span></a>
+      <a class="tab" href="#odore" data-nav="odore"><span class="tab-icon"><svg class="icon" aria-hidden="true"><use href="#i-wind" /></svg></span><span class="tab-label">Odore</span></a>
+      <a class="tab" href="#sensori" data-nav="sensori"><span class="tab-icon"><svg class="icon" aria-hidden="true"><use href="#i-activity" /></svg></span><span class="tab-label">Sensori</span></a>
+      <a class="tab" href="#eventi" data-nav="eventi"><span class="tab-icon"><svg class="icon" aria-hidden="true"><use href="#i-bell" /></svg></span><span class="tab-label">Eventi</span></a>
+    </nav>
 
     <script src="libs/socket.io.min.js"></script>
     <script src="libs/arduino.js"></script>
