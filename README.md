@@ -1,8 +1,8 @@
-# TO-Breath
+# TO-
 
 **Il cassonetto che respira Torino.** Progetto per hackTurin 2026, challenge **City Signals**.
 
-TO-Breath trasforma un normale cassonetto in un sensore urbano. Sulla Arduino UNO Q, in locale (funziona anche senza rete), il cassonetto:
+TO-Breathe trasforma un normale cassonetto in un sensore urbano. Sulla Arduino UNO Q, in locale (funziona anche senza rete), il cassonetto:
 
 1. **annusa** i gas della decomposizione (SGP30) e misura temperatura e umidità (AHT20): se l'aria dentro il cassonetto cambia in modo anomalo (rifiuti organici in degrado, principio d'incendio) lancia un allarme;
 2. **guarda** dentro di sé con una camera e un modello di stima della profondità (Depth Anything V2), aiutato da un sensore di distanza ToF, e calcola **quanto è pieno**;
@@ -97,7 +97,7 @@ ESC-HackTurin/                   (repository di TO-Breath)
 │   └── vercel.json, package.json, .env.example
 ├── supabase/
 │   ├── migrations/              schema del database (tabelle, funzioni, RLS), da eseguire nel SQL Editor
-│   ├── reset_to_breath.sql      cancella le tabelle di TO-Breath per ripartire da zero (es. dopo un tentativo a metà)
+│   ├── reset_to_breath.sql      cancella le tabelle di TO-Breathe per ripartire da zero (es. dopo un tentativo a metà)
 │   └── optional/kit_access.sql  solo con lo schema del kit: lettura delle tabelle per gli utenti con la funzione `bins`
 ├── AI_Depth_Analysis/           riferimento al repository originale di Depth-Anything-V2
 │                                (non usato a runtime: l'app usa il modello ONNX in python/)
