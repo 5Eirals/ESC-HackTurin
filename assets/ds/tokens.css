@@ -1,0 +1,448 @@
+/**
+ * IAMAimpresa design system — tokens.
+ *
+ * Copiato da IAMAimpresa Kit (styles/tokens.css, commit ad5a8dc).
+ * Copyright (c) 2026 IAMAimpresa. All rights reserved.
+ * Uso consentito solo nei termini della IAMAimpresa Hackathon Source License 1.0
+ * (durante e per l'evento): niente uso commerciale, niente pubblicazione di derivati.
+ *
+ * Unica fonte di colori, tipografia, spaziature, raggi, ombre e movimento della dashboard.
+ * Le sezioni Tailwind (@theme) del kit sono convertite in fondo in variabili CSS normali.
+ * Non modificare: i componenti stanno in components.css, lo stile dell'app in ../style.css.
+ */
+:root {
+  --n-0: #ffffff;
+  --n-50: #fafaf8;
+  --n-100: #f6f6f4;
+  --n-200: #f2f2ef;
+  --n-250: #ecece8;
+  --n-300: #e3e3df;
+  --n-350: #c9c9c3;
+  --n-400: #a1a19c;
+  --n-450: #74747a;
+  --n-500: #66666b;
+  --n-600: #4a4a50;
+  --n-700: #35353a;
+  --n-800: #2a2a2f;
+  --n-850: #343230;
+  --n-900: #292726;
+  --n-950: #1f1d1b;
+  --n-975: #191715;
+  --n-ink: #15151a;
+
+  --p-red-brand: #e4002b;
+  --p-red-text: #cc0025;
+  --p-red-text-dark: #ec5353;
+  --p-red-deep: #93202e;
+  --p-red-deep-dark: #ed7477;
+
+  --p-red-tint: #fce0e6;
+  --p-red-tint-dark: #48212b;
+  --p-red-on-tint: #cc0025;
+  --p-red-on-tint-dark: #f06a6a;
+
+  --p-green-700: #3c7d5a;
+  --p-green-400: #71be93;
+  --p-amber-700: #965900;
+  --p-amber-400: #c68233;
+  --p-blue-700: #0b69bb;
+  --p-blue-400: #4794e2;
+
+  --p-series-1: #2a78d6;
+  --p-series-1-dark: #3987e5;
+  --p-series-2: #008300;
+  --p-series-2-dark: #008300;
+  --p-series-3: #e87ba4;
+  --p-series-3-dark: #d55181;
+  --p-series-4: #eda100;
+  --p-series-4-dark: #c98500;
+  --p-series-5: #1baf7a;
+  --p-series-5-dark: #199e70;
+
+  --p-slate: #4676a1;
+  --p-slate-dark: #86baeb;
+  --p-slate-tint: #62abec;
+  --p-slate-tint-dark: #5b97d3;
+  --p-ochre: #9d671c;
+  --p-ochre-dark: #e5a659;
+  --p-ochre-tint: #e4a249;
+  --p-ochre-tint-dark: #c9893d;
+  --p-plum: #975b7e;
+  --p-plum-dark: #e19cc1;
+  --p-plum-tint: #da85b6;
+  --p-plum-tint-dark: #bf789d;
+  --p-ink-tint: #868690;
+  --p-ink-tint-dark: #98989c;
+
+  --p-rail-top: #551116;
+  --p-rail-top-dark: #4b070e;
+  --p-rail-bottom: #320c10;
+  --p-rail-bottom-dark: #2b060a;
+
+  --spacing: 0.25rem;
+  --radius: 0.25rem;
+
+  --control-h-xs: 1.5rem;
+  --control-h-sm: 2rem;
+  --control-h: 2.25rem;
+  --control-h-lg: 2.5rem;
+
+  --font-sans-stack:
+    'Geist Variable', 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono-stack: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --duration-fast: 150ms;
+  --duration-swap: 80ms;
+  --duration-base: 300ms;
+  --duration-slow: 500ms;
+
+  --duration-entrance: 900ms;
+  --duration-ambient: 2.6s;
+  --duration-shimmer: 1.8s;
+  --duration-bar: 800ms;
+  --duration-caret: 1000ms;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --stagger-step: 40ms;
+
+  --z-raised: 10;
+  --z-sticky: 30;
+  --z-overlay: 40;
+  --z-modal: 50;
+
+  --z-inner-back: -1;
+  --z-inner-front: 1;
+  --z-inner-top: 2;
+
+  --space-field: 0.375rem;
+  --space-block: 0.75rem;
+  --space-section: 1rem;
+
+  --focus-ring-width: 3px;
+
+  --border-hairline: 1.5px;
+  --blur-glow: 6px;
+  --gutter-hairline: 0.5px;
+
+  --background: var(--n-0);
+  --foreground: var(--n-ink);
+  --card: var(--n-0);
+  --card-foreground: var(--n-ink);
+  --popover: var(--n-0);
+  --popover-foreground: var(--n-ink);
+  --primary: var(--p-red-brand);
+  --primary-foreground: var(--n-0);
+  --secondary: var(--n-200);
+  --secondary-foreground: var(--n-ink);
+  --muted: var(--n-200);
+  --muted-foreground: var(--n-500);
+  --accent: var(--n-200);
+  --accent-foreground: var(--n-ink);
+  --destructive: var(--p-red-deep);
+  --destructive-foreground: var(--n-0);
+  --border: var(--n-300);
+  --input: var(--n-350);
+  --ring: var(--n-450);
+
+  --ring-destructive: color-mix(in oklab, var(--destructive) 20%, transparent);
+
+  --chart-1: var(--n-ink);
+  --chart-2: var(--n-600);
+  --chart-3: var(--n-450);
+  --chart-4: var(--n-400);
+  --chart-5: var(--n-350);
+  --chart-1-tint: var(--p-ink-tint);
+  --chart-context: var(--n-300);
+  --chart-reference: var(--n-600);
+  --chart-grid: var(--n-250);
+  --chart-axis: var(--n-500);
+
+  --chart-slate: var(--p-slate);
+  --chart-slate-tint: var(--p-slate-tint);
+  --chart-ochre: var(--p-ochre);
+  --chart-ochre-tint: var(--p-ochre-tint);
+  --chart-plum: var(--p-plum);
+  --chart-plum-tint: var(--p-plum-tint);
+
+  --chart-good: var(--p-green-700);
+  --chart-good-mid: #7cab8f;
+  --chart-good-soft: #b9d2c2;
+  --chart-good-tint: #e6efe9;
+  --chart-alert: var(--p-red-text);
+  --chart-alert-mid: #e66d75;
+  --chart-alert-soft: #f3b4bc;
+  --chart-alert-tint: var(--p-red-tint);
+
+  --tag-1: var(--p-series-1);
+  --tag-2: var(--p-series-2);
+  --tag-3: var(--p-series-3);
+  --tag-4: var(--p-series-4);
+  --tag-5: var(--p-series-5);
+  --sidebar: var(--p-rail-top);
+  --sidebar-foreground: #f7eeed;
+  --sidebar-primary: var(--p-red-brand);
+  --sidebar-primary-foreground: var(--n-0);
+  --sidebar-accent: oklch(1 0 0 / 10%);
+  --sidebar-accent-foreground: var(--n-0);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: #d18882;
+
+  --foreground-secondary: var(--n-600);
+
+  --primary-text: var(--p-red-text);
+
+  --selected: var(--p-red-tint);
+  --selected-foreground: var(--p-red-on-tint);
+
+  --success: var(--p-green-700);
+  --success-foreground: var(--n-0);
+  --warning: var(--p-amber-700);
+  --warning-foreground: var(--n-0);
+  --info: var(--p-blue-700);
+  --info-foreground: var(--n-0);
+  --rating: var(--p-amber-700);
+
+  --surface-field: transparent;
+  --surface-command: var(--card);
+
+  --surface-destructive-focus: color-mix(in oklab, var(--destructive) 10%, transparent);
+  --surface-ghost-hover: var(--accent);
+  --surface-kbd-tooltip: color-mix(in oklab, var(--background) 20%, transparent);
+  --surface-switch-off: var(--input);
+  --surface-switch-thumb-on: var(--background);
+  --surface-switch-thumb-off: var(--background);
+  --surface-tab-active: var(--background);
+  --border-tab-active: transparent;
+  --surface-field-checked: color-mix(in oklab, var(--primary) 5%, transparent);
+
+  --surface-bar-hover: color-mix(in oklab, var(--primary) 30%, transparent);
+  --surface-bubble-hover: color-mix(in oklab, var(--primary) 80%, transparent);
+  --surface-item-hover: color-mix(in oklab, var(--accent) 50%, transparent);
+  --surface-segment-hover: color-mix(in oklab, var(--border) 60%, transparent);
+  --border-chart-tooltip: color-mix(in oklab, var(--border) 50%, transparent);
+  --border-input-group: color-mix(in oklab, var(--input) 30%, transparent);
+  --ring-popup: color-mix(in oklab, var(--foreground) 10%, transparent);
+  --ring-flow-secondary: color-mix(in oklab, var(--secondary) 60%, transparent);
+
+  --surface-outline-hover: var(--accent);
+  --surface-command-hover: var(--accent);
+  --surface-field-hover: var(--accent);
+  --surface-neural: var(--info);
+  --surface-bubble-mine: oklch(from var(--primary) 0.93 calc(c * 0.4) h);
+  --surface-bubble-mine-hover: oklch(from var(--primary) 0.88 calc(c * 0.5) h);
+  --surface-bubble-error: color-mix(in oklab, var(--destructive) 10%, transparent);
+  --surface-bubble-error-hover: color-mix(in oklab, var(--destructive) 20%, transparent);
+  --border-craft-hover: transparent;
+  --shadow-inset-edge: rgba(0, 0, 0, 0.6);
+  --shadow-inset-sheen: rgba(255, 255, 255, 0.9);
+  --shadow-matter-hover: inset 0 -6px 8px -1px rgba(25, 175, 253, 0.6);
+  --gradient-flow-ring: conic-gradient(
+    from 90deg at 50% 50%,
+    var(--primary),
+    var(--primary) 50%,
+    rgba(0, 0, 0, 15%) 51% 99%,
+    var(--primary)
+  );
+  --gradient-flow-ring-secondary: conic-gradient(
+    from 90deg at 50% 50%,
+    var(--secondary),
+    var(--secondary) 50%,
+    rgba(0, 0, 0, 15%) 51% 99%,
+    var(--secondary)
+  );
+
+  --gradient-bubble: linear-gradient(
+    to bottom right in oklab,
+    #000000 0%,
+    color-mix(in oklab, #000000 90%, transparent) 100%
+  );
+  --gradient-glass: linear-gradient(
+    to left in oklab,
+    color-mix(in oklab, #ffffff 15%, transparent) 0%,
+    color-mix(in oklab, #ffffff 25%, transparent) 100%
+  );
+  --gradient-neural: linear-gradient(
+    to right in oklab,
+    color-mix(in oklab, var(--fixed-dark) 20%, transparent) 0%,
+    color-mix(in oklab, #ffffff 20%, transparent) 100%
+  );
+  --surface-media: var(--n-200);
+  --fixed-light: var(--n-0);
+  --fixed-dark: var(--n-950);
+
+  --scrim: oklab(0 0 0 / 0.5);
+  --scrim-media: oklab(0 0 0 / 0.7);
+
+  --gradient-sidebar: linear-gradient(168deg, var(--p-rail-top) 0%, var(--p-rail-bottom) 100%);
+  --gradient-hero: linear-gradient(
+    101deg,
+    rgb(44 10 14 / 0.96) 0%,
+    rgb(82 16 22 / 0.88) 44%,
+    rgb(140 19 33 / 0.62) 100%
+  );
+
+  --elev-xs: 0 1px 2px 0 rgb(17 17 22 / 0.04);
+  --elev-sm: 0 1px 3px 0 rgb(17 17 22 / 0.05);
+  --elev-md: 0 4px 10px -2px rgb(17 17 22 / 0.07);
+  --elev-lg: 0 12px 26px -8px rgb(17 17 22 / 0.12);
+  --elev-xl: 0 20px 40px -12px rgb(17 17 22 / 0.16);
+}
+
+.dark {
+  --background: var(--n-950);
+  --foreground: #ecebe9;
+  --foreground-secondary: #c0bebb;
+  --muted-foreground: #a6a39f;
+  --card: var(--n-900);
+  --card-foreground: #ecebe9;
+  --popover: var(--n-850);
+  --popover-foreground: #ecebe9;
+  --primary: var(--p-red-brand);
+  --primary-foreground: var(--n-0);
+  --primary-text: var(--p-red-text-dark);
+  --secondary: var(--n-850);
+  --secondary-foreground: #ecebe9;
+  --muted: var(--n-975);
+  --accent: var(--n-850);
+  --accent-foreground: #ecebe9;
+  --selected: var(--p-red-tint-dark);
+  --selected-foreground: var(--p-red-on-tint-dark);
+  --destructive: var(--p-red-deep-dark);
+  --destructive-foreground: var(--n-ink);
+  --border: #3f3d3b;
+  --input: #6a6865;
+  --surface-field: var(--n-950);
+  --surface-command: color-mix(in oklab, var(--input) 30%, transparent);
+  --surface-destructive-focus: color-mix(in oklab, var(--destructive) 20%, transparent);
+  --surface-ghost-hover: color-mix(in oklab, var(--accent) 50%, transparent);
+  --surface-kbd-tooltip: color-mix(in oklab, var(--background) 10%, transparent);
+  --surface-switch-off: color-mix(in oklab, var(--input) 80%, transparent);
+  --surface-switch-thumb-on: var(--primary-foreground);
+  --surface-switch-thumb-off: var(--foreground);
+  --surface-tab-active: color-mix(in oklab, var(--input) 30%, transparent);
+  --border-tab-active: var(--input);
+  --surface-field-checked: color-mix(in oklab, var(--primary) 10%, transparent);
+  --surface-outline-hover: color-mix(in oklab, var(--input) 50%, transparent);
+  --surface-command-hover: color-mix(in oklab, var(--input) 50%, transparent);
+  --surface-field-hover: color-mix(in oklab, var(--input) 50%, transparent);
+  --surface-neural: color-mix(in oklab, var(--info) 60%, transparent);
+  --surface-bubble-mine: oklch(from var(--primary) 0.3 calc(c * 0.4) h);
+  --surface-bubble-mine-hover: oklch(from var(--primary) 0.35 calc(c * 0.5) h);
+  --surface-bubble-error: color-mix(in oklab, var(--destructive) 20%, transparent);
+  --surface-bubble-error-hover: color-mix(in oklab, var(--destructive) 30%, transparent);
+  --border-craft-hover: color-mix(in oklab, var(--primary) 30%, transparent);
+  --shadow-inset-edge: rgba(255, 255, 255, 0.6);
+  --shadow-inset-sheen: rgba(0, 0, 0, 0.6);
+  --shadow-matter-hover: inset 0 -3px 2px -1px rgba(25, 175, 253, 0.6);
+  --gradient-flow-ring: conic-gradient(
+    from 90deg at 50% 50%,
+    var(--primary),
+    var(--primary) 50%,
+    rgba(0, 0, 0, 30%) 51% 99%,
+    var(--primary)
+  );
+  --gradient-flow-ring-secondary: conic-gradient(
+    from 90deg at 50% 50%,
+    var(--secondary),
+    var(--secondary) 50%,
+    rgba(255, 255, 255, 60%) 51% 99%,
+    var(--secondary)
+  );
+  --ring: #a8a5a3;
+  --ring-destructive: color-mix(in oklab, var(--destructive) 40%, transparent);
+
+  --chart-1: #ecebe9;
+  --chart-2: #c0bebb;
+  --chart-3: #9b9894;
+  --chart-4: #7a7774;
+  --chart-5: #5d5a57;
+  --chart-1-tint: var(--p-ink-tint-dark);
+  --chart-context: #3a3836;
+  --chart-reference: #c0bebb;
+  --chart-grid: #353331;
+  --chart-axis: #a6a39f;
+  --chart-slate: var(--p-slate-dark);
+  --chart-slate-tint: var(--p-slate-tint-dark);
+  --chart-ochre: var(--p-ochre-dark);
+  --chart-ochre-tint: var(--p-ochre-tint-dark);
+  --chart-plum: var(--p-plum-dark);
+  --chart-plum-tint: var(--p-plum-tint-dark);
+  --chart-good: var(--p-green-400);
+  --chart-good-mid: #528468;
+  --chart-good-soft: #3a5746;
+  --chart-good-tint: #334138;
+  --chart-alert: var(--p-red-text-dark);
+  --chart-alert-mid: #ad5152;
+  --chart-alert-soft: #6e3d3e;
+  --chart-alert-tint: var(--p-red-tint-dark);
+  --tag-1: var(--p-series-1-dark);
+  --tag-2: var(--p-series-2-dark);
+  --tag-3: var(--p-series-3-dark);
+  --tag-4: var(--p-series-4-dark);
+  --tag-5: var(--p-series-5-dark);
+
+  --success: var(--p-green-400);
+  --success-foreground: var(--n-ink);
+  --warning: var(--p-amber-400);
+  --warning-foreground: var(--n-ink);
+  --info: var(--p-blue-400);
+  --info-foreground: var(--n-ink);
+  --rating: var(--p-amber-400);
+  --surface-media: var(--n-850);
+
+  --sidebar: var(--p-rail-top-dark);
+  --gradient-sidebar: linear-gradient(168deg, var(--p-rail-top-dark) 0%, var(--p-rail-bottom-dark) 100%);
+
+  --elev-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --elev-sm: 0 1px 3px 0 rgb(0 0 0 / 0.38);
+  --elev-md: 0 4px 12px -2px rgb(0 0 0 / 0.46);
+  --elev-lg: 0 14px 32px -8px rgb(0 0 0 / 0.58);
+  --elev-xl: 0 22px 46px -12px rgb(0 0 0 / 0.66);
+}
+
+@media (width < 48rem) {
+  :root {
+    --control-h-xs: 2rem;
+    --control-h-sm: 2.25rem;
+    --control-h: 2.5rem;
+    --control-h-lg: 2.75rem;
+  }
+}
+
+/* --- Da @theme del kit: raggi, ombre, caratteri e scala del testo come variabili CSS --- */
+:root {
+  color-scheme: light;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+
+  --shadow-xs: var(--elev-xs);
+  --shadow-sm: var(--elev-sm);
+  --shadow-md: var(--elev-md);
+  --shadow-lg: var(--elev-lg);
+  --shadow-xl: var(--elev-xl);
+
+  --text-3xs: 0.625rem;
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+table {
+  font-variant-numeric: tabular-nums;
+}
