@@ -403,8 +403,11 @@ def analyze(img, tracker, tof_distance_mm=None):
     covered = cv2.morphologyEx(covered.astype(np.uint8), cv2.MORPH_OPEN, np.ones((9, 9), np.uint8)) > 0
     coverage = float(covered[binm].mean())
     floor_mm = json.load(open(CFG["calib_ab"])).get("auto", {}).get("floor_mm") or float(np.median(empty_z[binm]))
-    tof_used = tof_distance_mm > 0
-    waste_mm = max(0.0, floor_mm - tof_distance_mm) if tof_used else 0.0
+    if not 0 < tof_distance_mm < 1.2 * floor_mm:
+        # Lid open (camera and ToF looking elsewhere) or ToF not valid: skip this photo
+        raise RuntimeError(f"ToF a {tof_distance_mm} mm, fuori scala: coperchio aperto? misura saltata")
+    tof_used = True
+    waste_mm = max(0.0, floor_mm - tof_distance_mm)
     if waste_mm > 10:
         _last_waste_mm = waste_mm                   # the ToF sees waste: remember its height
     height = waste_mm if waste_mm > 10 else (_last_waste_mm if coverage > 0.02 else 0.0)
